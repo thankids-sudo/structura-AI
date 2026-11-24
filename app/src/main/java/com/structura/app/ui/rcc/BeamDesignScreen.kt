@@ -163,7 +163,7 @@ fun BeamDesignScreen(onBack: () -> Unit, onDrawing: () -> Unit) {
             Button(onClick = { run() }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Design beam") }
             error?.let { Text(it, color = FailRed) }
             if (pre != null && result == null) Text(
-                "Mu and Vu come from the FEM analysis (×1.5). Check them before designing.",
+                "Mu and Vu come from the FEM ULS envelope (IS 456 Table 18). Check them before designing.",
                 style = MaterialTheme.typography.bodySmall,
             )
             result?.let {

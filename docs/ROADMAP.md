@@ -23,7 +23,8 @@ Each step is built, tested and committed separately.
 - [x] 3.1 3D frame FEM (6 DOF/node): continuous beam, portal frame and space frame templates, N/V/M diagrams, deformed shape
 - [x] 3.2 Equilibrium check, mechanism detection, CSV export
 - [x] 3.3 Critical beam from FEM handed to the IS 456 beam designer
-- [ ] 3.3a Member end releases (hinges), point loads on members, load cases & IS 875 / IS 1893 combinations
+- [x] 3.3a Member end hinges, point loads on members, DL/LL/WL load cases, IS 456 Table 18 combinations, ULS envelope
+- [x] 3.3c Interactive live loads with animated 3D deformation
 - [ ] 3.3b Node/member editor (free-form models like RFEM), plate/shell elements for slabs
 - [ ] 3.4 AI explains results and sanity-checks them (load path, unusual ratios, missing combinations)
 

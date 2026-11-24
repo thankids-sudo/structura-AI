@@ -34,9 +34,26 @@ object FemReport {
         )
     }
 
+    /** Envelope (max/min) of each member over several load combinations. */
+    fun envelope(all: List<FrameResults>, stations: Int = 40): List<MemberEnvelope> {
+        require(all.isNotEmpty())
+        val per = all.map { envelope(it, stations) }
+        return per.first().indices.map { k ->
+            val rows = per.map { it[k] }
+            rows.first().copy(
+                nAbsMax = rows.maxByOrNull { abs(it.nAbsMax) }!!.nAbsMax,
+                vzAbsMax = rows.maxOf { it.vzAbsMax },
+                myMax = rows.maxOf { it.myMax },
+                myMin = rows.minOf { it.myMin },
+            )
+        }
+    }
+
     /** Horizontal member with the largest |My| — handed to the IS 456 beam designer. */
-    fun criticalBeam(r: FrameResults): MemberEnvelope? =
-        envelope(r).filter { it.horizontal && it.b > 0 }.maxByOrNull { max(it.myMax, -it.myMin) }
+    fun criticalBeam(r: FrameResults): MemberEnvelope? = criticalBeam(envelope(r))
+
+    fun criticalBeam(env: List<MemberEnvelope>): MemberEnvelope? =
+        env.filter { it.horizontal && it.b > 0 }.maxByOrNull { max(it.myMax, -it.myMin) }
 
     /** Full results as CSV (opens in Excel): nodes, reactions, member stations. */
     fun csv(r: FrameResults, stations: Int = 10): String = buildString {

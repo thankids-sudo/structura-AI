@@ -106,3 +106,80 @@ class FrameSolverTest {
         FrameSolver.analyse(model)
     }
 }
+
+class FrameLoadsTest {
+    private val mat = Material("Test", 2.0e8, 0.8e8, 0.0)
+    private val sec = Section.rect(0.3, 0.5)
+    private val ei = mat.e * sec.iy
+
+    private fun near(expected: Double, actual: Double, rel: Double = 1e-6) =
+        assertEquals(expected, actual, abs(expected) * rel + 1e-9)
+
+    @Test
+    fun simplySupported_centralPointLoad() {
+        val l = 6.0; val p = 40.0
+        val r = FrameSolver.analyse(Generators.continuousBeam(listOf(l), sec, mat, 0.0, selfWeight = false, pointLoadMid = p))
+        val st = r.internalForces(1, 2)
+        near(p * l / 4, st.maxOf { it.my })                                  // PL/4
+        near(-p * l * l * l / (48 * ei), r.deformedShape(1, 1.0, 2)[1].z)   // PL³/48EI
+        near(p / 2, r.reactions[1]!![2])
+    }
+
+    @Test
+    fun offCentrePointLoad_momentUnderLoad() {
+        val l = 5.0; val p = 30.0; val a = 1.5
+        val model = Generators.continuousBeam(listOf(l), sec, mat, 0.0, selfWeight = false)
+            .copy(pointLoads = listOf(PointLoad(1, LoadDir.GLOBAL_Z, -p, a, LoadCase.LL)))
+        val r = FrameSolver.analyse(model)
+        near(p * a * (l - a) / l, r.internalForces(1, 100).maxOf { it.my }, 1e-3)   // Pab/L
+        near(p * (l - a) / l, r.reactions[1]!![2])
+    }
+
+    @Test
+    fun hingedBothEnds_onFixedSupports_behavesSimplySupported() {
+        val l = 6.0; val w = 10.0
+        val model = FrameModel(
+            nodes = listOf(Node(1, 0.0, 0.0, 0.0), Node(2, 3.0, 0.0, 0.0), Node(3, 3.0 + l, 0.0, 0.0)),
+            members = listOf(
+                Member(1, 1, 2, mat, sec),                                   // rigid stub cantilever-free
+                Member(2, 2, 3, mat, sec, hingeI = true, hingeJ = true),
+            ),
+            supports = listOf(Support.fixed(1), Support.fixed(2), Support.fixed(3)),
+            memberLoads = listOf(MemberLoad(2, LoadDir.GLOBAL_Z, -w)),
+            selfWeight = false,
+        )
+        val r = FrameSolver.analyse(model)
+        val st = r.internalForces(2, 2)
+        near(0.0, st[0].my); near(0.0, st[2].my)                            // hinges carry no moment
+        near(w * l * l / 8, st[1].my)                                        // wL²/8
+        near(-5 * w * l * l * l * l / (384 * ei), r.deformedShape(2, 1.0, 2)[1].z)
+    }
+
+    @Test
+    fun combinationScalesCases() {
+        val model = Generators.continuousBeam(listOf(5.0), sec, mat, 10.0, selfWeight = false, liveUdl = 4.0)
+        val dl = FrameSolver.analyse(model, LoadCombination("DL", mapOf(LoadCase.DL to 1.0)))
+        val ll = FrameSolver.analyse(model, LoadCombination("LL", mapOf(LoadCase.LL to 1.0)))
+        val uls = FrameSolver.analyse(model, LoadCombination.isLimitState(false).first())
+        val mid = { r: FrameResults -> r.internalForces(1, 2)[1].my }
+        near(1.5 * (mid(dl) + mid(ll)), mid(uls))
+        near(10.0 * 25.0 / 8, mid(dl))
+    }
+
+    @Test
+    fun envelopeOverCombinations_takesExtremes() {
+        val m = Material.concrete(25.0)
+        val model = Generators.portalFrame(
+            listOf(6.0), listOf(3.5), Section.rect(0.3, 0.45), Section.rect(0.3, 0.6), m,
+            beamUdl = 15.0, lateral = 40.0, liveUdl = 10.0,
+        )
+        val combos = LoadCombination.isLimitState(true)
+        assertEquals(7, combos.size)
+        val all = FrameSolver.analyseAll(model, combos).map { it.second }
+        all.forEach { r -> assertTrue(r.equilibriumError.all { abs(it) < 1e-6 }) }
+        val env = FemReport.envelope(all)
+        val beam = env.first { it.horizontal }
+        assertTrue(all.all { r -> FemReport.envelope(r).first { it.horizontal }.myMax <= beam.myMax + 1e-9 })
+        assertTrue(beam.myMin < 0 && beam.myMax > 0)
+    }
+}

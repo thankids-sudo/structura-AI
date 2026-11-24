@@ -56,7 +56,10 @@ import com.structura.core.fem.FrameModel
 import com.structura.core.fem.FrameResults
 import com.structura.core.fem.FrameSolver
 import com.structura.core.fem.Generators
+import com.structura.core.fem.LoadCase
+import com.structura.core.fem.LoadCombination
 import com.structura.core.fem.Material
+import com.structura.core.fem.MemberEnvelope
 import com.structura.core.fem.NodalLoad
 import com.structura.core.fem.Section
 import kotlinx.coroutines.Dispatchers
@@ -79,7 +82,10 @@ fun FemScreen(onBack: () -> Unit, onDesignBeam: () -> Unit) {
     var beamB by rememberSaveable { mutableStateOf("230") }
     var beamH by rememberSaveable { mutableStateOf("450") }
     var fck by rememberSaveable { mutableStateOf("25") }
-    var udl by rememberSaveable { mutableStateOf("25") }
+    var udl by rememberSaveable { mutableStateOf("15") }
+    var liveUdl by rememberSaveable { mutableStateOf("10") }
+    var pointMid by rememberSaveable { mutableStateOf("0") }
+    var hinged by rememberSaveable { mutableStateOf(false) }
     var lateral by rememberSaveable { mutableStateOf("10") }
     var selfWeight by rememberSaveable { mutableStateOf(true) }
 
@@ -92,6 +98,9 @@ fun FemScreen(onBack: () -> Unit, onDesignBeam: () -> Unit) {
     var autoScale by remember { mutableStateOf(0.0) }
     var scaleMul by remember { mutableFloatStateOf(1f) }
     var animate by remember { mutableStateOf(true) }
+    var combos by remember { mutableStateOf(listOf<LoadCombination>()) }
+    var comboIdx by remember { mutableStateOf(0) }
+    var ulsEnvelope by remember { mutableStateOf<List<MemberEnvelope>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var view by remember { mutableStateOf(ResultView.MODEL) }
@@ -105,16 +114,24 @@ fun FemScreen(onBack: () -> Unit, onDesignBeam: () -> Unit) {
         val beam = Section.rect(beamB.toDouble() / 1000, beamH.toDouble() / 1000)
         val col = Section.rect(colB.toDouble() / 1000, colH.toDouble() / 1000)
         return when (template) {
-            Template.BEAM -> Generators.continuousBeam(list(spans), beam, mat, udl.toDouble(), selfWeight)
-            Template.PORTAL -> Generators.portalFrame(list(spans), list(storeys), col, beam, mat, udl.toDouble(), lateral.toDouble(), selfWeight)
-            Template.SPACE -> Generators.spaceFrame(list(spans), list(baysY), list(storeys), col, beam, mat, udl.toDouble(), lateral.toDouble(), selfWeight)
+            Template.BEAM -> Generators.continuousBeam(
+                list(spans), beam, mat, udl.toDouble(), selfWeight, liveUdl.toDouble(), pointMid.toDouble(),
+            )
+            Template.PORTAL -> Generators.portalFrame(
+                list(spans), list(storeys), col, beam, mat, udl.toDouble(), lateral.toDouble(), selfWeight,
+                liveUdl.toDouble(), pointMid.toDouble(), hinged,
+            )
+            Template.SPACE -> Generators.spaceFrame(
+                list(spans), list(baysY), list(storeys), col, beam, mat, udl.toDouble(), lateral.toDouble(), selfWeight,
+                liveUdl.toDouble(), pointMid.toDouble(), hinged,
+            )
         }
     }
 
     fun withLive(base: FrameModel, live: Map<Int, Triple<Float, Float, Float>>): FrameModel =
         if (live.isEmpty()) base else base.copy(
             nodalLoads = base.nodalLoads + live.filter { (_, f) -> f.first != 0f || f.second != 0f || f.third != 0f }
-                .map { (n, f) -> NodalLoad(n, listOf(f.first.toDouble(), f.second.toDouble(), f.third.toDouble(), 0.0, 0.0, 0.0)) },
+                .map { (n, f) -> NodalLoad(n, listOf(f.first.toDouble(), f.second.toDouble(), f.third.toDouble(), 0.0, 0.0, 0.0), LoadCase.TAP) },
         )
 
     fun run() {
@@ -124,7 +141,16 @@ fun FemScreen(onBack: () -> Unit, onDesignBeam: () -> Unit) {
         liveLoads = emptyMap(); selectedNode = null
         scope.launch {
             try {
-                val r = withContext(Dispatchers.Default) { FrameSolver.analyse(m) }
+                val cases = m.loadCases
+                val withLive = LoadCase.LL in cases
+                val withLat = LoadCase.WL in cases
+                val uls = LoadCombination.isLimitState(withLat)
+                val list = uls + LoadCombination.cases(withLive, withLat)
+                val (r, env) = withContext(Dispatchers.Default) {
+                    val all = FrameSolver.analyseAll(m, uls).map { it.second }
+                    all.first() to FemReport.envelope(all)
+                }
+                combos = list; comboIdx = 0; ulsEnvelope = env
                 val maxD = maxOf(r.maxDisplacement().second, r.maxMemberDeflection())
                 autoScale = if (maxD > 1e-12) 0.08 * modelSpan(m) / maxD else 1.0
                 results = r
@@ -138,13 +164,14 @@ fun FemScreen(onBack: () -> Unit, onDesignBeam: () -> Unit) {
     }
 
     // Re-solve as soon as a live load changes (debounced) — the view animates to the new shape.
-    LaunchedEffect(liveLoads) {
+    LaunchedEffect(liveLoads, comboIdx) {
         val base = baseModel ?: return@LaunchedEffect
-        if (results == null && liveLoads.isEmpty()) return@LaunchedEffect
+        if (results == null) return@LaunchedEffect
+        val combo = combos.getOrNull(comboIdx) ?: return@LaunchedEffect
         delay(120)
         val m = withLive(base, liveLoads)
         try {
-            val r = withContext(Dispatchers.Default) { FrameSolver.analyse(m) }
+            val r = withContext(Dispatchers.Default) { FrameSolver.analyse(m, combo) }
             model = m; results = r; error = null
         } catch (e: Exception) {
             error = e.message
@@ -186,16 +213,25 @@ fun FemScreen(onBack: () -> Unit, onDesignBeam: () -> Unit) {
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Field("Concrete fck", fck, Modifier.weight(1f)) { fck = it }
-                Field("Beam UDL (kN/m)", udl, Modifier.weight(1f)) { udl = it }
-                if (template != Template.BEAM) Field("Lateral/floor (kN)", lateral, Modifier.weight(1f)) { lateral = it }
+                if (template != Template.BEAM) Field("WL lateral/floor (kN)", lateral, Modifier.weight(1f)) { lateral = it }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Field("DL UDL (kN/m)", udl, Modifier.weight(1f)) { udl = it }
+                Field("LL UDL (kN/m)", liveUdl, Modifier.weight(1f)) { liveUdl = it }
+                Field("LL point @ mid (kN)", pointMid, Modifier.weight(1f)) { pointMid = it }
+            }
+            if (template != Template.BEAM) Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(checked = hinged, onCheckedChange = { hinged = it })
+                Text("  Beams hinged at both ends (simply supported on columns)")
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = selfWeight, onCheckedChange = { selfWeight = it })
                 Text("  Include self-weight (γ = 25 kN/m³)")
             }
             Text(
-                "Loads entered are taken as they are (service or factored). Global Z is up; member local z points down " +
-                    "on beams, so sagging My is positive — same convention as RFEM.",
+                "Enter characteristic (service) loads: DL = IS 875 Part 1, LL = Part 2, WL = Part 3 wind or IS 1893 " +
+                    "seismic force (applied ±X). Combinations per IS 456 Table 18. Z is up; on beams local z points down, " +
+                    "so sagging My is positive (RFEM convention).",
                 style = MaterialTheme.typography.bodySmall,
             )
             Button(onClick = { run() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Generate & analyse") }
@@ -203,6 +239,14 @@ fun FemScreen(onBack: () -> Unit, onDesignBeam: () -> Unit) {
             error?.let { Text(it, color = FailRed) }
 
             model?.let { m ->
+                if (combos.isNotEmpty()) {
+                    Text("Load combination / case", style = MaterialTheme.typography.labelMedium)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        combos.forEachIndexed { k, c ->
+                            FilterChip(selected = k == comboIdx, onClick = { comboIdx = k }, label = { Text(c.name) })
+                        }
+                    }
+                }
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     ResultView.entries.forEach { v ->
                         FilterChip(
@@ -260,14 +304,14 @@ fun FemScreen(onBack: () -> Unit, onDesignBeam: () -> Unit) {
                 }
             }
 
-            results?.let { r -> ResultsSummary(r, onDesignBeam) }
+            results?.let { r -> ResultsSummary(r, ulsEnvelope, onDesignBeam) }
             Spacer(Modifier.height(24.dp))
         }
     }
 }
 
 @Composable
-private fun ResultsSummary(r: FrameResults, onDesignBeam: () -> Unit) {
+private fun ResultsSummary(r: FrameResults, uls: List<MemberEnvelope>, onDesignBeam: () -> Unit) {
     val eq = r.equilibriumError
     val ok = eq.all { abs(it) < 1e-3 * (1 + abs(r.totalLoad[2])) }
     val mono = FontFamily.Monospace
@@ -285,8 +329,8 @@ private fun ResultsSummary(r: FrameResults, onDesignBeam: () -> Unit) {
             Text("Max member deflection (from chord): ${"%.2f".format(r.maxMemberDeflection() * 1000)} mm")
         }
     }
-    val env = FemReport.envelope(r)
-    Text("Member envelope", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.secondary)
+    val env = uls.ifEmpty { FemReport.envelope(r) }
+    Text("Member envelope — all IS 456 ULS combinations", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.secondary)
     Text(" M#   L(m)   N(kN)  Vz(kN) My+(kNm) My-(kNm)", fontFamily = mono, style = MaterialTheme.typography.bodySmall)
     env.forEach { e ->
         Text(
@@ -301,7 +345,7 @@ private fun ResultsSummary(r: FrameResults, onDesignBeam: () -> Unit) {
         Text("%5d %7.1f %7.1f %7.1f %7.1f".format(n, v[0], v[1], v[2], v[4]), fontFamily = mono, style = MaterialTheme.typography.bodySmall)
     }
     HorizontalDivider()
-    val crit = FemReport.criticalBeam(r)
+    val crit = FemReport.criticalBeam(env)
     if (crit != null) {
         Text(
             "Critical beam: M${crit.member}, span ${"%.2f".format(crit.length)} m, My+ ${"%.1f".format(crit.myMax)} kN·m, " +
@@ -313,11 +357,11 @@ private fun ResultsSummary(r: FrameResults, onDesignBeam: () -> Unit) {
                 b = crit.b * 1000,
                 d = crit.h * 1000,
                 spanM = crit.length,
-                mu = 1.5 * maxOf(crit.myMax, -crit.myMin),
-                vu = 1.5 * crit.vzAbsMax,
+                mu = maxOf(crit.myMax, -crit.myMin),
+                vu = crit.vzAbsMax,
             )
             onDesignBeam()
-        }, modifier = Modifier.fillMaxWidth()) { Text("Design this beam to IS 456 (×1.5 load factor)") }
+        }, modifier = Modifier.fillMaxWidth()) { Text("Design critical beam to IS 456 (ULS envelope)") }
     }
 }
 

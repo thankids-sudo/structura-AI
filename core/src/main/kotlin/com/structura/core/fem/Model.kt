@@ -75,6 +75,10 @@ data class Section(
     }
 }
 
+/**
+ * A member. [hingeI] / [hingeJ] release both bending moments (My, Mz) at that end — a moment hinge,
+ * as RFEM's "hinged" member end release. Axial, shear and torsion stay connected.
+ */
 data class Member(
     val id: Int,
     val i: Int,
@@ -82,6 +86,8 @@ data class Member(
     val material: Material,
     val section: Section,
     val betaDeg: Double = 0.0,
+    val hingeI: Boolean = false,
+    val hingeJ: Boolean = false,
 )
 
 /** Six restraints in global axes: ux, uy, uz, φx, φy, φz (true = fixed). */
@@ -97,15 +103,61 @@ data class Support(val node: Int, val restraints: List<Boolean>) {
     }
 }
 
+/** Load cases used by the generators and the IS 875 combinations. Self-weight always belongs to DL. */
+object LoadCase {
+    const val DL = "DL"      // dead load (IS 875 Part 1)
+    const val LL = "LL"      // imposed load (IS 875 Part 2)
+    const val WL = "WL"      // wind / lateral (IS 875 Part 3) or EL (IS 1893)
+    const val TAP = "TAP"    // interactive loads applied on screen
+}
+
 /** Concentrated load at a node in global axes: Fx, Fy, Fz (kN), Mx, My, Mz (kN·m). */
-data class NodalLoad(val node: Int, val values: List<Double>) {
+data class NodalLoad(val node: Int, val values: List<Double>, val case: String = LoadCase.DL) {
     init { require(values.size == 6) }
 }
 
 enum class LoadDir { GLOBAL_X, GLOBAL_Y, GLOBAL_Z, LOCAL_X, LOCAL_Y, LOCAL_Z }
 
 /** Uniform member load over the true member length, kN/m (gravity = GLOBAL_Z with negative w). */
-data class MemberLoad(val member: Int, val dir: LoadDir, val w: Double)
+data class MemberLoad(val member: Int, val dir: LoadDir, val w: Double, val case: String = LoadCase.DL)
+
+/** Concentrated force [p] (kN) on a member at distance [a] (m) from node i. */
+data class PointLoad(val member: Int, val dir: LoadDir, val p: Double, val a: Double, val case: String = LoadCase.DL)
+
+/** A load combination: factor per load case; cases not listed get factor 0. */
+data class LoadCombination(val name: String, val factors: Map<String, Double>, val selfWeightFactor: Double = factors[LoadCase.DL] ?: 0.0) {
+    fun factor(case: String) = factors[case] ?: 0.0
+
+    companion object {
+        /** Every load × 1.0 — what `FrameSolver.analyse(model)` uses. */
+        val ALL = LoadCombination("All loads × 1.0", emptyMap(), 1.0)
+
+        /**
+         * IS 456:2000 Table 18 / IS 875 (Part 5) Cl. 6.3 limit-state combinations for strength.
+         * WL stands for wind (IS 875 Part 3) or earthquake (IS 1893) — both are applied in ±X.
+         */
+        fun isLimitState(withLateral: Boolean): List<LoadCombination> {
+            val list = arrayListOf(LoadCombination("1.5(DL+LL)", mapOf(LoadCase.DL to 1.5, LoadCase.LL to 1.5)))
+            if (withLateral) {
+                list += LoadCombination("1.2(DL+LL+WL)", mapOf(LoadCase.DL to 1.2, LoadCase.LL to 1.2, LoadCase.WL to 1.2))
+                list += LoadCombination("1.2(DL+LL−WL)", mapOf(LoadCase.DL to 1.2, LoadCase.LL to 1.2, LoadCase.WL to -1.2))
+                list += LoadCombination("1.5(DL+WL)", mapOf(LoadCase.DL to 1.5, LoadCase.WL to 1.5))
+                list += LoadCombination("1.5(DL−WL)", mapOf(LoadCase.DL to 1.5, LoadCase.WL to -1.5))
+                list += LoadCombination("0.9DL+1.5WL", mapOf(LoadCase.DL to 0.9, LoadCase.WL to 1.5))
+                list += LoadCombination("0.9DL−1.5WL", mapOf(LoadCase.DL to 0.9, LoadCase.WL to -1.5))
+            }
+            return list
+        }
+
+        /** Single load cases × 1.0 (service level, for deflection). */
+        fun cases(withLive: Boolean, withLateral: Boolean): List<LoadCombination> = buildList {
+            add(LoadCombination("DL", mapOf(LoadCase.DL to 1.0)))
+            if (withLive) add(LoadCombination("LL", mapOf(LoadCase.LL to 1.0)))
+            if (withLateral) add(LoadCombination("WL", mapOf(LoadCase.WL to 1.0)))
+            add(LoadCombination("DL+LL (service)", mapOf(LoadCase.DL to 1.0, LoadCase.LL to 1.0)))
+        }
+    }
+}
 
 data class FrameModel(
     val nodes: List<Node>,
@@ -115,7 +167,29 @@ data class FrameModel(
     val memberLoads: List<MemberLoad> = emptyList(),
     val selfWeight: Boolean = true,
     val title: String = "Model",
+    val pointLoads: List<PointLoad> = emptyList(),
+    /** Multiplier on self-weight (set by load combinations). */
+    val selfWeightFactor: Double = 1.0,
 ) {
+    /** Load cases present in this model (DL is always present when self-weight is on). */
+    val loadCases: Set<String>
+        get() = buildSet {
+            if (selfWeight) add(LoadCase.DL)
+            nodalLoads.forEach { add(it.case) }; memberLoads.forEach { add(it.case) }; pointLoads.forEach { add(it.case) }
+        }
+
+    /** The same model with every load multiplied by its combination factor (linear superposition). */
+    fun factored(c: LoadCombination): FrameModel {
+        if (c === LoadCombination.ALL) return this
+        fun f(case: String) = if (case == LoadCase.TAP) 1.0 else c.factor(case)
+        return copy(
+            nodalLoads = nodalLoads.mapNotNull { l -> f(l.case).takeIf { it != 0.0 }?.let { k -> l.copy(values = l.values.map { it * k }) } },
+            memberLoads = memberLoads.mapNotNull { l -> f(l.case).takeIf { it != 0.0 }?.let { k -> l.copy(w = l.w * k) } },
+            pointLoads = pointLoads.mapNotNull { l -> f(l.case).takeIf { it != 0.0 }?.let { k -> l.copy(p = l.p * k) } },
+            selfWeightFactor = if (selfWeight) c.selfWeightFactor * selfWeightFactor else 0.0,
+            title = "$title — ${c.name}",
+        )
+    }
     val nodeIndex: Map<Int, Int> = nodes.withIndex().associate { (k, n) -> n.id to k }
     fun node(id: Int): Node = nodes[nodeIndex[id] ?: error("Node $id not found")]
 }

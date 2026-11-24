@@ -70,12 +70,15 @@ Every check carries its clause:
 - 6 DOF per node, Euler–Bernoulli members, rigid joints, linear static, direct stiffness method, Cholesky solver.
 - **Global axes:** X, Y horizontal, **Z up** (gravity −Z).
 - **Member local axes (as in RFEM):** x along i→j; on beams y is horizontal and **z points down**, so sagging gives **+My**. Columns: y = global Y. Member rotation β is supported.
-- **Loads:** nodal forces/moments, uniform member loads in global or local directions, self-weight (γA).
+- **Loads:** nodal forces/moments, uniform and concentrated member loads (global or local directions), self-weight (γA), in load cases DL / LL / WL.
+- **Member end hinges** (moment releases, by static condensation) — e.g. beams simply supported on columns.
+- **Combinations:** IS 456 Table 18 limit-state set — 1.5(DL+LL), 1.2(DL+LL±WL), 1.5(DL±WL), 0.9DL±1.5WL — plus service cases; the member envelope covers all ULS combinations.
+- **Live loads:** tap a node in the 3D view and drag Fx/Fy/Fz sliders; the frame re-solves and the deformed shape animates (loads applied this way are added at ×1.0 to whichever combination is shown and are not part of the ULS envelope).
 - **Results:** node displacements, support reactions, member end forces, N / Vy / Vz / Mt / My / Mz at any number of stations, and the exact deflected shape (Hermite + fixed-end UDL term).
 - **Checks:** equilibrium ΣR + ΣF = 0 shown on screen (as in RFEM), and a mechanism is reported with the node and DOF that are free.
 - **Templates:** continuous beam, 2D portal frame (bays × storeys), 3D space frame (bays X × bays Y × storeys).
 - **Export:** CSV of all results (opens in Excel). "Design this beam" sends the critical beam's My/Vz (×1.5) to the IS 456 beam designer.
-- **Verified against closed-form results** in `FrameSolverTest`: cantilever PL³/3EI, simply supported 5wL⁴/384EI and wL²/8, fixed–fixed wL²/12 and wL²/24, two-span support moment wL²/8 and central reaction 1.25wL, portal frame symmetry and equilibrium.
+- **Verified against closed-form results** in `FrameSolverTest`: cantilever PL³/3EI, simply supported 5wL⁴/384EI and wL²/8, fixed–fixed wL²/12 and wL²/24, two-span support moment wL²/8 and central reaction 1.25wL, PL/4 and PL³/48EI, Pab/L, hinged member = simply supported, combination superposition, portal frame symmetry and equilibrium.
 
 ## Detail drawing (UCS-based, DXF)
 
