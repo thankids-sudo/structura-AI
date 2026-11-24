@@ -50,6 +50,7 @@ val MODULES = listOf(
         "RCC Design", "IS 456 · IS 875 · IS 1893 · SP 16", Icons.Filled.ViewWeek, 1,
         listOf(
             ModuleTool("Beam design", Routes.RCC_BEAM),
+            ModuleTool("Beam detail drawing (UCS · DXF)", Routes.RCC_DRAWING),
             ModuleTool("Slab design", null),
             ModuleTool("Column design", null),
             ModuleTool("Footing design", null),
@@ -61,8 +62,12 @@ val MODULES = listOf(
         listOf(ModuleTool("Beam / purlin", null), ModuleTool("Column / strut", null), ModuleTool("Tension member", null), ModuleTool("Bolted / welded joint", null)),
     ),
     StructuraModule(
-        "Frame Analysis + AI", "Stiffness method · SFD / BMD", Icons.Filled.AccountTree, 3,
-        listOf(ModuleTool("Continuous beam", null), ModuleTool("2D portal frame", null), ModuleTool("AI result check", null)),
+        "FEM Analysis + AI", "3D frame FEM · N / V / M diagrams · RFEM-style", Icons.Filled.AccountTree, 1,
+        listOf(
+            ModuleTool("Continuous beam / 2D frame / 3D frame", Routes.FEM),
+            ModuleTool("Load combinations (IS 875 / IS 1893)", null),
+            ModuleTool("AI result check", null),
+        ),
     ),
     StructuraModule(
         "Drawing → Structure AI", "Plan → grid → layout → sizes", Icons.Filled.ViewInAr, 4,

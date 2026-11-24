@@ -5,6 +5,7 @@ Each step is built, tested and committed separately.
 ## Phase 1: RCC Design (IS 456)
 - [x] 1.0 Project scaffold: `:core` engine + `:app` Compose UI, home with all 4 modules
 - [x] 1.1 Rectangular beam: singly/doubly, shear, deflection, detailing checks, shareable report
+- [x] 1.1a UCS-based beam detail drawing (elevation + section A-A) with DXF R12 export
 - [ ] 1.2 Two-layer bars with automatic d recalculation; flanged (T/L) beams per Cl. 23.1.2 & Annex G-2
 - [ ] 1.3 Slabs: one-way, two-way (Annex D, Table 26/27)
 - [ ] 1.4 Columns: axial + uniaxial/biaxial (Cl. 39, SP 16 interaction charts), slenderness (Cl. 25)
@@ -19,9 +20,11 @@ Each step is built, tested and committed separately.
 - [ ] 2.4 Tension members (Cl. 6); bolted & welded connections (Cl. 10)
 
 ## Phase 3: Frame Analysis + AI
-- [ ] 3.1 Continuous beam by the stiffness method, with SFD/BMD graphs
-- [ ] 3.2 2D portal frames: member loads, supports, moment releases
-- [ ] 3.3 Analysis results feed straight into the Phase 1/2 member design
+- [x] 3.1 3D frame FEM (6 DOF/node): continuous beam, portal frame and space frame templates, N/V/M diagrams, deformed shape
+- [x] 3.2 Equilibrium check, mechanism detection, CSV export
+- [x] 3.3 Critical beam from FEM handed to the IS 456 beam designer
+- [ ] 3.3a Member end releases (hinges), point loads on members, load cases & IS 875 / IS 1893 combinations
+- [ ] 3.3b Node/member editor (free-form models like RFEM), plate/shell elements for slabs
 - [ ] 3.4 AI explains results and sanity-checks them (load path, unusual ratios, missing combinations)
 
 ## Phase 4: Drawing → Structure AI

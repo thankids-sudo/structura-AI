@@ -4,9 +4,9 @@ Android app for structural design to Indian Standards. It has four modules, buil
 
 | # | Module | Codes | Status |
 |---|--------|-------|--------|
-| 1 | **RCC Design**: beam, slab, column, footing, BBS | IS 456, IS 875, IS 1893, SP 16 | **Phase 1: Beam design done** |
+| 1 | **RCC Design**: beam, slab, column, footing, BBS | IS 456, IS 875, IS 1893, SP 16 | **Beam design + UCS detail drawing / DXF done** |
 | 2 | **Steel Design**: beams, columns, tension members, connections | IS 800, IS 808, IS 4923 | Planned |
-| 3 | **Frame Analysis + AI**: continuous beams, 2D frames, SFD/BMD, AI result check | Stiffness method | Planned |
+| 3 | **FEM Analysis + AI**: 3D frame FEM (RFEM-style), N/V/M diagrams, deformed shape, AI result check | Direct stiffness method | **3D frame solver done** |
 | 4 | **Drawing → Structure AI**: plan import, grid/column layout, load take-down, member sizing | — | Planned |
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the step-by-step build plan.
@@ -18,6 +18,8 @@ structura-ai/
 ├── core/                     Pure-Kotlin design engine (no Android). Unit-tested on JVM.
 │   └── src/main/kotlin/com/structura/core/
 │       ├── codes/IS456.kt     Constants, Table 19, Table 20, Fig. 23 steel curve, Cl. 23.2.1 deflection
+│       ├── fem/               3D frame FEM: Model, FrameSolver, Generators (beam / portal / space frame), FemReport (CSV)
+│       ├── drawing/           UCS drawing model, BeamDetailer (elevation + section A-A), DxfWriter (AutoCAD R12)
 │       └── rcc/
 │           ├── BeamDesign.kt  Limit-state beam design: singly/doubly, shear, deflection, detailing checks
 │           └── BeamReport.kt  Plain-text design note (share via WhatsApp / e-mail)
@@ -62,6 +64,25 @@ Every check carries its clause:
 - **Table 19 / 20 at an intermediate grade** (e.g. M22) use the next *lower* tabulated grade. This is conservative; the code gives no rule for interpolating between grades.
 - Bars are assumed to be **in one layer**. If they don't fit, the spacing check fails and asks for two layers. In that case d has to be recomputed; automatic two-layer d is a Phase 1.1 item.
 - Exposure is taken as **moderate**.
+
+## FEM analysis (RFEM-style 3D frame)
+
+- 6 DOF per node, Euler–Bernoulli members, rigid joints, linear static, direct stiffness method, Cholesky solver.
+- **Global axes:** X, Y horizontal, **Z up** (gravity −Z).
+- **Member local axes (as in RFEM):** x along i→j; on beams y is horizontal and **z points down**, so sagging gives **+My**. Columns: y = global Y. Member rotation β is supported.
+- **Loads:** nodal forces/moments, uniform member loads in global or local directions, self-weight (γA).
+- **Results:** node displacements, support reactions, member end forces, N / Vy / Vz / Mt / My / Mz at any number of stations, and the exact deflected shape (Hermite + fixed-end UDL term).
+- **Checks:** equilibrium ΣR + ΣF = 0 shown on screen (as in RFEM), and a mechanism is reported with the node and DOF that are free.
+- **Templates:** continuous beam, 2D portal frame (bays × storeys), 3D space frame (bays X × bays Y × storeys).
+- **Export:** CSV of all results (opens in Excel). "Design this beam" sends the critical beam's My/Vz (×1.5) to the IS 456 beam designer.
+- **Verified against closed-form results** in `FrameSolverTest`: cantilever PL³/3EI, simply supported 5wL⁴/384EI and wL²/8, fixed–fixed wL²/12 and wL²/24, two-span support moment wL²/8 and central reaction 1.25wL, portal frame symmetry and equilibrium.
+
+## Detail drawing (UCS-based, DXF)
+
+- Every view has its own **named UCS**: `ELEVATION` (origin at the soffit, outer face of the left support), `SECTION_A-A` (origin at the bottom-left corner of the section), and `NOTES`.
+- Geometry is at true size in mm; the UCS maps each view into world coordinates.
+- **DXF R12 export** has layers S-CONC, S-REBAR, S-STIRRUP, S-HATCH (45° diagonal hatching), S-DIM, S-TEXT and S-CENTER. Bars are drawn as donuts, φ is written as `%%c`, and the named UCS table is included. In AutoCAD, use **UCS ▸ Named ▸ SECTION_A-A ▸ Set Current**.
+- Cantilevers automatically put the main steel at the top.
 
 ## Maintaining
 

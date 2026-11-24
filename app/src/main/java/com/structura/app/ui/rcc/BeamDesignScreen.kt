@@ -23,6 +23,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -38,6 +39,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.structura.app.DesignSession
 import com.structura.app.ui.theme.FailRed
 import com.structura.app.ui.theme.InfoBlue
 import com.structura.app.ui.theme.PassGreen
@@ -51,21 +53,23 @@ import com.structura.core.rcc.Status
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BeamDesignScreen(onBack: () -> Unit) {
-    var b by rememberSaveable { mutableStateOf("230") }
-    var dOverall by rememberSaveable { mutableStateOf("450") }
+fun BeamDesignScreen(onBack: () -> Unit, onDrawing: () -> Unit) {
+    val pre = remember { DesignSession.takePrefill() }
+    fun n0(v: Double) = if (v == Math.floor(v)) v.toLong().toString() else String.format(java.util.Locale.US, "%.2f", v)
+    var b by rememberSaveable { mutableStateOf(pre?.let { n0(it.b) } ?: "230") }
+    var dOverall by rememberSaveable { mutableStateOf(pre?.let { n0(it.d) } ?: "450") }
     var cover by rememberSaveable { mutableStateOf("25") }
     var bar by rememberSaveable { mutableStateOf("16") }
     var compBar by rememberSaveable { mutableStateOf("12") }
     var stirrup by rememberSaveable { mutableStateOf("8") }
-    var spanM by rememberSaveable { mutableStateOf("5.0") }
+    var spanM by rememberSaveable { mutableStateOf(pre?.let { n0(it.spanM) } ?: "5.0") }
     var support by rememberSaveable { mutableStateOf(Support.SIMPLY_SUPPORTED) }
     var fck by rememberSaveable { mutableStateOf(20) }
     var fy by rememberSaveable { mutableStateOf(500) }
-    var useUdl by rememberSaveable { mutableStateOf(true) }
+    var useUdl by rememberSaveable { mutableStateOf(pre == null) }
     var wu by rememberSaveable { mutableStateOf("30") }
-    var muIn by rememberSaveable { mutableStateOf("90") }
-    var vuIn by rememberSaveable { mutableStateOf("80") }
+    var muIn by rememberSaveable { mutableStateOf(pre?.let { String.format(java.util.Locale.US, "%.1f", it.mu) } ?: "90") }
+    var vuIn by rememberSaveable { mutableStateOf(pre?.let { String.format(java.util.Locale.US, "%.1f", it.vu) } ?: "80") }
 
     var result by remember { mutableStateOf<BeamResult?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -79,7 +83,7 @@ fun BeamDesignScreen(onBack: () -> Unit) {
                 if (support == Support.CANTILEVER) BeamDesigner.cantileverUdl(wu.toDouble(), span)
                 else BeamDesigner.simplySupportedUdl(wu.toDouble(), span)
             } else muIn.toDouble() to vuIn.toDouble()
-            result = BeamDesigner.design(
+            val input =
                 BeamInput(
                     widthB = b.toDouble(), overallDepthD = dOverall.toDouble(), clearCover = cover.toDouble(),
                     mainBarDia = bar.toDouble(), compBarDia = compBar.toDouble(), stirrupDia = stirrup.toDouble(),
@@ -87,7 +91,10 @@ fun BeamDesignScreen(onBack: () -> Unit) {
                     fck = fck.toDouble(), fy = fy.toDouble(),
                     factoredMoment = mu, factoredShear = vu,
                 )
-            )
+            val r = BeamDesigner.design(input)
+            result = r
+            DesignSession.beamInput = input
+            DesignSession.beamResult = r
         } catch (e: NumberFormatException) {
             error = "Please fill every field with a number."
             result = null
@@ -155,7 +162,16 @@ fun BeamDesignScreen(onBack: () -> Unit) {
 
             Button(onClick = { run() }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Design beam") }
             error?.let { Text(it, color = FailRed) }
-            result?.let { ResultView(it) }
+            if (pre != null && result == null) Text(
+                "Mu and Vu come from the FEM analysis (×1.5). Check them before designing.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            result?.let {
+                OutlinedButton(onClick = onDrawing, modifier = Modifier.fillMaxWidth()) {
+                    Text("Detail drawing (UCS) & DXF export")
+                }
+                ResultView(it)
+            }
             Spacer(Modifier.height(32.dp))
         }
     }
