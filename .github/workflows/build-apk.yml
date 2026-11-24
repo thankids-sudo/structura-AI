@@ -1,1 +1,59 @@
+name: Build APK
 
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unpack uploaded project zip (first run only)
+        run: |
+          if [ -f StructuraAI-Phase1.zip ]; then
+            unzip -q -o StructuraAI-Phase1.zip -d /tmp/upload
+            rsync -a --exclude '.github' /tmp/upload/structura-ai/ ./
+            git rm -q --cached StructuraAI-Phase1.zip
+            rm -f StructuraAI-Phase1.zip
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git update-index --chmod=+x gradlew
+            git commit -m "Unpack StructuraAI-Phase1.zip into repository"
+            git push
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Run engine tests (IS 456)
+        run: |
+          chmod +x gradlew
+          ./gradlew :core:test --no-daemon
+
+      - name: Build debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StructuraAI-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-test-report
+          path: core/build/reports/tests/test/
