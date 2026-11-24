@@ -21,6 +21,7 @@ object HtmlReport {
         combinations: List<LoadCombination>,
         buckling: BucklingResult? = null,
         project: String = model.title,
+        modal: ModalResult? = null,
     ): String = buildString {
         fun f(v: Double, d: Int = 2) = String.format(Locale.US, "%.${d}f", v)
         fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -47,8 +48,8 @@ object HtmlReport {
         append("<h1>Structura AI — Structural Analysis Report</h1>")
         append("<div class=\"meta\"><b>Project:</b> ").append(esc(project)).append("<br><b>Report date:</b> ")
             .append(LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy, HH:mm"))).append("<br>")
-        append("<b>Solver:</b> linear-elastic 3D frame, direct stiffness method, Euler–Bernoulli members (6 DOF/node), ")
-        append("moment-hinge end releases by static condensation, uniform and concentrated member loads, nodal loads, self-weight. ")
+        append("<b>Solver:</b> linear-elastic 3D frame, direct stiffness method, ${esc(model.beamTheory.label)} members (6 DOF/node), ")
+        append("moment hinges and rotational end springs by static condensation, uniform and concentrated member loads, nodal loads, self-weight. ")
         append("Load combinations per IS 456:2000 Table 18 / IS 875 (Part 5).</div>")
         append("<p class=\"note\"><b>PRELIMINARY ENGINEERING ANALYSIS.</b> Results are for checking and design development; ")
         append("verify input data, loads (IS 875, IS 1893) and member design before use for construction. ")
@@ -66,13 +67,26 @@ object HtmlReport {
             listOf("N${n.id}", f(n.x, 3), f(n.y, 3), f(n.z, 3), ModelEditor.supportType(model, n.id).name.lowercase().replace('_', ' ').let { if (it == "none") "free" else it })
         })
 
-        append("<h2>3. Members</h2>")
-        table(listOf("Member", "Node i", "Node j", "L (m)", "Section", "Material", "A (cm²)", "Iy (cm⁴)", "Iz (cm⁴)", "End hinges"), model.members.map { m ->
+        append("<h2>3. Materials and sections</h2>")
+        val mats = model.members.map { it.material }.distinct()
+        table(listOf("Material", "E (MPa)", "G (MPa)", "γ (kN/m³)"), mats.map { listOf(it.name, f(it.e / 1000, 0), f(it.g / 1000, 0), f(it.gamma, 1)) })
+        val secs = model.members.map { it.section }.distinct()
+        table(listOf("Section", "Shape", "A (cm²)", "Iy (cm⁴)", "Iz (cm⁴)", "J (cm⁴)", "Asy (cm²)", "Asz (cm²)"), secs.map {
+            listOf(it.name, it.shape, f(it.a * 1e4, 2), f(it.iy * 1e8, 1), f(it.iz * 1e8, 1), f(it.j * 1e8, 1), f(it.asy * 1e4, 2), f(it.asz * 1e4, 2))
+        })
+        append("<p class=\"meta\">Hollow-section properties are computed from nominal dimensions with sharp corners. ")
+        append("FRP values are illustrative unless replaced with the manufacturer's tested data.</p>")
+
+        append("<h2>3a. Members</h2>")
+        table(listOf("Member", "Node i", "Node j", "L (m)", "Section", "Material", "A (cm²)", "Iy (cm⁴)", "Iz (cm⁴)", "End conditions"), model.members.map { m ->
             val l = (model.node(m.j).pos - model.node(m.i).pos).length
             listOf(
                 "M${m.id}", "N${m.i}", "N${m.j}", f(l, 3), m.section.name, m.material.name,
                 f(m.section.a * 1e4, 1), f(m.section.iy * 1e8, 0), f(m.section.iz * 1e8, 0),
-                listOfNotNull(if (m.hingeI) "i" else null, if (m.hingeJ) "j" else null).joinToString(" + ").ifEmpty { "—" },
+                listOfNotNull(
+                    m.endI?.let { k -> if (k == 0.0) "hinge i" else "spring i ${f(k, 0)} kN·m/rad" },
+                    m.endJ?.let { k -> if (k == 0.0) "hinge j" else "spring j ${f(k, 0)} kN·m/rad" },
+                ).joinToString(", ").ifEmpty { "rigid" },
             )
         })
 
@@ -139,6 +153,19 @@ object HtmlReport {
             append("(${buckling.segmentsPerMember} elements per member, ${buckling.iterations} iterations). ")
             if (buckling.lambda > 0 && buckling.lambda < 10) append("λcr &lt; 10: second-order (P-Δ) effects should be considered (IS 800 Cl. 4.4.2). ")
             append("This is not a design factor of safety.</p>")
+        }
+
+        if (modal != null && modal.modes.isNotEmpty()) {
+            append("<h2>9. Modal analysis</h2>")
+            append("<p>Consistent mass, ${modal.segmentsPerMember} elements per member; mass source: ${esc(modal.massSource)}. ")
+            append("Total participating mass X ${f(modal.totalMass[0], 3)} t, Y ${f(modal.totalMass[1], 3)} t, Z ${f(modal.totalMass[2], 3)} t.</p>")
+            table(listOf("Mode", "f (Hz)", "T (s)", "ω (rad/s)", "Mx (%)", "My (%)", "Mz (%)"), modal.modes.map {
+                listOf("${it.number}", f(it.frequency, 3), f(it.period, 4), f(it.omega, 2),
+                    f(it.participation[0] * 100, 1), f(it.participation[1] * 100, 1), f(it.participation[2] * 100, 1))
+            })
+            val cum = modal.cumulative
+            append("<p>Cumulative effective mass: X ${f(cum[0] * 100, 1)} %, Y ${f(cum[1] * 100, 1)} %, Z ${f(cum[2] * 100, 1)} %. ")
+            append("IS 1893 (Part 1):2016 Cl. 7.7.5.2 requires enough modes for at least 90 % in each direction considered.</p>")
         }
 
         append("<p class=\"meta\" style=\"margin-top:32px\">Generated by Structura AI · sign convention as RFEM: member local x from i to j, ")

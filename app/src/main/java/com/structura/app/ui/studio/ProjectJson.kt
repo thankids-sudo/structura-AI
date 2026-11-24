@@ -26,17 +26,19 @@ object ProjectJson {
         val secs = m.members.map { it.section }.distinct()
         val o = JSONObject()
         o.put("format", FORMAT); o.put("version", VERSION)
-        o.put("title", m.title); o.put("selfWeight", m.selfWeight)
+        o.put("title", m.title); o.put("selfWeight", m.selfWeight); o.put("beamTheory", m.beamTheory.name)
         o.put("units", "kN, m; global Z up")
         o.put("materials", JSONArray(mats.map { JSONObject().put("name", it.name).put("E", it.e).put("G", it.g).put("gamma", it.gamma) }))
         o.put("sections", JSONArray(secs.map {
             JSONObject().put("name", it.name).put("A", it.a).put("Iy", it.iy).put("Iz", it.iz).put("J", it.j).put("b", it.b).put("h", it.h)
+                .put("Asy", it.asy).put("Asz", it.asz).put("shape", it.shape).put("t", it.t)
         }))
         o.put("nodes", JSONArray(m.nodes.map { JSONObject().put("id", it.id).put("x", it.x).put("y", it.y).put("z", it.z) }))
         o.put("members", JSONArray(m.members.map {
             JSONObject().put("id", it.id).put("i", it.i).put("j", it.j)
                 .put("material", mats.indexOf(it.material)).put("section", secs.indexOf(it.section))
                 .put("beta", it.betaDeg).put("hingeI", it.hingeI).put("hingeJ", it.hingeJ)
+                .apply { it.springI?.let { k -> put("springI", k) }; it.springJ?.let { k -> put("springJ", k) } }
         }))
         o.put("supports", JSONArray(m.supports.map { JSONObject().put("node", it.node).put("restraints", JSONArray(it.restraints)) }))
         o.put("nodalLoads", JSONArray(m.nodalLoads.map { JSONObject().put("node", it.node).put("case", it.case).put("values", JSONArray(it.values)) }))
@@ -58,18 +60,21 @@ object ProjectJson {
         val mats = arr("materials") { Material(it.getString("name"), it.getDouble("E"), it.getDouble("G"), it.getDouble("gamma")) }
         val secs = arr("sections") {
             Section(it.getString("name"), it.getDouble("A"), it.getDouble("Iy"), it.getDouble("Iz"), it.getDouble("J"),
-                it.optDouble("b", 0.0), it.optDouble("h", 0.0))
+                it.optDouble("b", 0.0), it.optDouble("h", 0.0), it.optDouble("Asy", 0.0), it.optDouble("Asz", 0.0),
+                it.optString("shape", "GENERAL"), it.optDouble("t", 0.0))
         }
         return FrameModel(
             nodes = arr("nodes") { Node(it.getInt("id"), it.getDouble("x"), it.getDouble("y"), it.getDouble("z")) },
             members = arr("members") {
                 Member(it.getInt("id"), it.getInt("i"), it.getInt("j"), mats[it.getInt("material")], secs[it.getInt("section")],
-                    it.optDouble("beta", 0.0), it.optBoolean("hingeI"), it.optBoolean("hingeJ"))
+                    it.optDouble("beta", 0.0), it.optBoolean("hingeI"), it.optBoolean("hingeJ"),
+                    if (it.has("springI")) it.getDouble("springI") else null, if (it.has("springJ")) it.getDouble("springJ") else null)
             },
             supports = arr("supports") { s -> val r = s.getJSONArray("restraints"); Support(s.getInt("node"), (0 until 6).map { r.getBoolean(it) }) },
             nodalLoads = arr("nodalLoads") { NodalLoad(it.getInt("node"), dbl(it.getJSONArray("values")), it.optString("case", "DL")) },
             memberLoads = arr("memberLoads") { MemberLoad(it.getInt("member"), LoadDir.valueOf(it.getString("dir")), it.getDouble("w"), it.optString("case", "DL")) },
             selfWeight = o.optBoolean("selfWeight", true),
+            beamTheory = runCatching { com.structura.core.fem.BeamTheory.valueOf(o.optString("beamTheory", "EULER")) }.getOrDefault(com.structura.core.fem.BeamTheory.EULER),
             title = o.optString("title", "Project"),
             pointLoads = arr("pointLoads") {
                 PointLoad(it.getInt("member"), LoadDir.valueOf(it.getString("dir")), it.getDouble("p"), it.getDouble("a"), it.optString("case", "DL"))

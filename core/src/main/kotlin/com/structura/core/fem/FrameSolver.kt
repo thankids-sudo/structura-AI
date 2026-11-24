@@ -55,8 +55,20 @@ object FrameSolver {
         return MemberAxes(x, y, z, len)
     }
 
-    /** 12×12 local stiffness matrix, DOF order (u, v, w, θx, θy, θz) at i then j. */
-    fun localStiffness(m: Member, len: Double): Array<DoubleArray> {
+    /** Shear-deformation parameters Φ = 12EI/(G·As·L²) for bending in the x-y (Iz, Asy) and x-z (Iy, Asz) planes. */
+    fun phi(m: Member, len: Double, theory: BeamTheory): Pair<Double, Double> {
+        if (theory != BeamTheory.TIMOSHENKO) return 0.0 to 0.0
+        val s = m.section; val e = m.material.e; val g = m.material.g
+        val py = if (s.asy > 0) 12 * e * s.iz / (g * s.asy * len * len) else 0.0
+        val pz = if (s.asz > 0) 12 * e * s.iy / (g * s.asz * len * len) else 0.0
+        return py to pz
+    }
+
+    /**
+     * 12×12 local stiffness matrix, DOF order (u, v, w, θx, θy, θz) at i then j.
+     * Timoshenko theory: Przemieniecki's shear-deformable beam (Φ terms); Φ = 0 gives Euler–Bernoulli.
+     */
+    fun localStiffness(m: Member, len: Double, theory: BeamTheory = BeamTheory.EULER): Array<DoubleArray> {
         val e = m.material.e
         val g = m.material.g
         val s = m.section
@@ -66,19 +78,20 @@ object FrameSolver {
 
         val ea = e * s.a / l
         val gj = g * s.j / l
-        val eiz = e * s.iz
-        val eiy = e * s.iy
+        val (py, pz) = phi(m, len, theory)
+        val eiz = e * s.iz / (1 + py)
+        val eiy = e * s.iy / (1 + pz)
 
         set(0, 0, ea); set(0, 6, -ea); set(6, 6, ea)
         set(3, 3, gj); set(3, 9, -gj); set(9, 9, gj)
         set(1, 1, 12 * eiz / l3); set(1, 5, 6 * eiz / l2); set(1, 7, -12 * eiz / l3); set(1, 11, 6 * eiz / l2)
-        set(5, 5, 4 * eiz / l); set(5, 7, -6 * eiz / l2); set(5, 11, 2 * eiz / l)
+        set(5, 5, (4 + py) * eiz / l); set(5, 7, -6 * eiz / l2); set(5, 11, (2 - py) * eiz / l)
         set(7, 7, 12 * eiz / l3); set(7, 11, -6 * eiz / l2)
-        set(11, 11, 4 * eiz / l)
+        set(11, 11, (4 + py) * eiz / l)
         set(2, 2, 12 * eiy / l3); set(2, 4, -6 * eiy / l2); set(2, 8, -12 * eiy / l3); set(2, 10, -6 * eiy / l2)
-        set(4, 4, 4 * eiy / l); set(4, 8, 6 * eiy / l2); set(4, 10, 2 * eiy / l)
+        set(4, 4, (4 + pz) * eiy / l); set(4, 8, 6 * eiy / l2); set(4, 10, (2 - pz) * eiy / l)
         set(8, 8, 12 * eiy / l3); set(8, 10, 6 * eiy / l2)
-        set(10, 10, 4 * eiy / l)
+        set(10, 10, (4 + pz) * eiy / l)
         return k
     }
 
@@ -123,36 +136,86 @@ object FrameSolver {
         return f
     }
 
-    /** Equivalent nodal loads (local) of a concentrated local force at a from i (fixed-end values). */
-    fun equivalentNodal(p: LocalPointLoad, l: Double): DoubleArray {
-        val a = p.a; val b = l - a; val l2 = l * l; val l3 = l2 * l
+    /**
+     * Equivalent nodal loads (local) of a concentrated local force at a from i (fixed-end values).
+     * With shear deformation (Φ) the fixed-end moments become P·a·b·(b + Φ·L/2)/(L²(1+Φ)) and
+     * P·a·b·(a + Φ·L/2)/(L²(1+Φ)); end shears follow from statics. Φ = 0 → classical values.
+     */
+    fun equivalentNodal(p: LocalPointLoad, l: Double, phiY: Double = 0.0, phiZ: Double = 0.0): DoubleArray {
+        val a = p.a; val b = l - a; val l2 = l * l
         val f = DoubleArray(12)
         f[0] = p.f.x * b / l; f[6] = p.f.x * a / l
-        f[1] = p.f.y * b * b * (3 * a + b) / l3; f[7] = p.f.y * a * a * (a + 3 * b) / l3
-        f[5] = p.f.y * a * b * b / l2; f[11] = -p.f.y * a * a * b / l2
-        f[2] = p.f.z * b * b * (3 * a + b) / l3; f[8] = p.f.z * a * a * (a + 3 * b) / l3
-        f[4] = -p.f.z * a * b * b / l2; f[10] = p.f.z * a * a * b / l2
+        fun fem(phi: Double): Pair<Double, Double> =
+            (a * b * (b + phi * l / 2) / (l2 * (1 + phi))) to (a * b * (a + phi * l / 2) / (l2 * (1 + phi)))
+        val (miY, mjY) = fem(phiY)
+        f[5] = p.f.y * miY; f[11] = -p.f.y * mjY
+        f[1] = p.f.y * b / l + (f[5] + f[11]) / l; f[7] = p.f.y - f[1]
+        val (miZ, mjZ) = fem(phiZ)
+        f[4] = -p.f.z * miZ; f[10] = p.f.z * mjZ
+        f[2] = p.f.z * b / l - (f[4] + f[10]) / l; f[8] = p.f.z - f[2]
         return f
     }
 
     fun releasedDofs(m: Member): IntArray =
-        (if (m.hingeI) intArrayOf(4, 5) else intArrayOf()) + (if (m.hingeJ) intArrayOf(10, 11) else intArrayOf())
+        (if (m.endI != null) intArrayOf(4, 5) else intArrayOf()) + (if (m.endJ != null) intArrayOf(10, 11) else intArrayOf())
 
-    /** Static condensation of released DOFs (exact Gaussian elimination of those rows). */
-    internal fun condense(k: Array<DoubleArray>, f: DoubleArray, released: IntArray) {
-        for (r in released) {
-            val krr = k[r][r]
-            if (krr == 0.0) continue
-            val row = k[r].copyOf()
-            val col = DoubleArray(12) { k[it][r] }
-            val fr = f[r]
-            for (i in 0 until 12) {
-                f[i] -= col[i] * fr / krr
-                for (j in 0 until 12) k[i][j] -= col[i] * row[j] / krr
-            }
-            for (i in 0 until 12) { k[r][i] = 0.0; k[i][r] = 0.0 }
-            f[r] = 0.0
+    /**
+     * Member with end hinges / rotational springs, by static condensation of internal member-end
+     * rotations: each released local rotation r gets an internal DOF joined to the node by a spring
+     * k (0 = hinge). Returns the condensed 12×12 stiffness and load vector, and a function that
+     * recovers the member-end displacement vector from the node displacements (local).
+     */
+    class EndCondensation(val k: Array<DoubleArray>, val f: DoubleArray, val recover: (DoubleArray) -> DoubleArray)
+
+    fun endCondensation(m: Member, kl: Array<DoubleArray>, feq: DoubleArray): EndCondensation {
+        val rel = releasedDofs(m)
+        if (rel.isEmpty()) return EndCondensation(kl, feq) { it }
+        val springs = rel.map { if (it < 6) m.endI!! else m.endJ!! }
+        val r = rel.size
+        val n = 12 + r
+        val map = IntArray(12) { c -> val k2 = rel.indexOf(c); if (k2 >= 0) 12 + k2 else c }
+        val kk = Array(n) { DoubleArray(n) }
+        val ff = DoubleArray(n)
+        for (a in 0 until 12) {
+            ff[map[a]] += feq[a]
+            for (b in 0 until 12) kk[map[a]][map[b]] += kl[a][b]
         }
+        rel.forEachIndexed { k2, c ->
+            val ks = springs[k2]; val ii = 12 + k2
+            kk[c][c] += ks; kk[ii][ii] += ks; kk[c][ii] -= ks; kk[ii][c] -= ks
+        }
+        val kii = Array(r) { x -> DoubleArray(r) { y -> kk[12 + x][12 + y] } }
+        val inv = invertSmall(kii)
+        // Kc = Knn − Kni·Kii⁻¹·Kin ; Fc = Fn − Kni·Kii⁻¹·Fi
+        val kniInv = Array(12) { a -> DoubleArray(r) { y -> var s = 0.0; for (x in 0 until r) s += kk[a][12 + x] * inv[x][y]; s } }
+        val kc = Array(12) { a -> DoubleArray(12) { b -> var s = kk[a][b]; for (y in 0 until r) s -= kniInv[a][y] * kk[12 + y][b]; s } }
+        val fc = DoubleArray(12) { a -> var s = ff[a]; for (y in 0 until r) s -= kniInv[a][y] * ff[12 + y]; s }
+        val recover = { un: DoubleArray ->
+            val rhs = DoubleArray(r) { x -> var s = ff[12 + x]; for (b in 0 until 12) s -= kk[12 + x][b] * un[b]; s }
+            val ui = DoubleArray(r) { x -> var s = 0.0; for (y in 0 until r) s += inv[x][y] * rhs[y]; s }
+            val um = un.copyOf()
+            rel.forEachIndexed { k2, c -> um[c] = ui[k2] }
+            um
+        }
+        return EndCondensation(kc, fc, recover)
+    }
+
+    private fun invertSmall(a: Array<DoubleArray>): Array<DoubleArray> {
+        val n = a.size
+        val m = Array(n) { r -> DoubleArray(2 * n) { c -> if (c < n) a[r][c] else if (c - n == r) 1.0 else 0.0 } }
+        for (col in 0 until n) {
+            var p = col
+            for (r in col + 1 until n) if (abs(m[r][col]) > abs(m[p][col])) p = r
+            val t = m[col]; m[col] = m[p]; m[p] = t
+            val piv = m[col][col]
+            require(abs(piv) > 1e-30) { "Member end release is singular" }
+            for (c in 0 until 2 * n) m[col][c] /= piv
+            for (r in 0 until n) if (r != col) {
+                val f = m[r][col]
+                if (f != 0.0) for (c in 0 until 2 * n) m[r][c] -= f * m[col][c]
+            }
+        }
+        return Array(n) { r -> DoubleArray(n) { c -> m[r][n + c] } }
     }
 
     internal fun rotation(ax: MemberAxes) = arrayOf(
@@ -203,8 +266,7 @@ object FrameSolver {
         val ax: MemberAxes,
         val klFull: Array<DoubleArray>,
         val feqFull: DoubleArray,
-        val kl: Array<DoubleArray>,
-        val feq: DoubleArray,
+        val cond: EndCondensation,
         val w: Vec3,
         val points: List<LocalPointLoad>,
     )
@@ -233,15 +295,16 @@ object FrameSolver {
         val data = HashMap<Int, MemberData>()
         for (m in model.members) {
             val ax = axes(model, m)
-            val klFull = localStiffness(m, ax.length)
+            val klFull = localStiffness(m, ax.length, model.beamTheory)
             val w = localUdl(model, m, ax)
             val pts = localPointLoads(model, m, ax)
             val feqFull = equivalentNodal(w, ax.length)
-            for (p in pts) { val e = equivalentNodal(p, ax.length); for (a in 0 until 12) feqFull[a] += e[a] }
-            val kl = Array(12) { klFull[it].copyOf() }
-            val feq = feqFull.copyOf()
-            condense(kl, feq, releasedDofs(m))
-            data[m.id] = MemberData(ax, klFull, feqFull, kl, feq, w, pts)
+            val (py, pz) = phi(m, ax.length, model.beamTheory)
+            for (p in pts) { val e = equivalentNodal(p, ax.length, py, pz); for (a in 0 until 12) feqFull[a] += e[a] }
+            val cond = endCondensation(m, klFull, feqFull)
+            data[m.id] = MemberData(ax, klFull, feqFull, cond, w, pts)
+            val kl = cond.k
+            val feq = cond.f
 
             val r = rotation(ax)
             val kg = globalStiffness(kl, r)
@@ -301,15 +364,13 @@ object FrameSolver {
             val d = data[m.id]!!
             val r = rotation(d.ax)
             val ug = DoubleArray(12).also { arr -> dofs(m).forEachIndexed { a, dof -> arr[a] = u[dof] } }
-            val ul = toLocal12(r, ug)
+            // member-end displacements (rotations at hinges / springs differ from the node rotation)
+            val ul = d.cond.recover(toLocal12(r, ug))
             endForces[m.id] = DoubleArray(12) { i ->
                 var s = 0.0
-                for (c in 0 until 12) s += d.kl[i][c] * ul[c]
-                s - d.feq[i]
+                for (c in 0 until 12) s += d.klFull[i][c] * ul[c]
+                s - d.feqFull[i]
             }
-            // member-end rotations at hinges (differ from the node rotation)
-            val rel = releasedDofs(m)
-            if (rel.isNotEmpty()) recoverReleased(d.klFull, d.feqFull, ul, rel)
             udl[m.id] = d.w
             axesMap[m.id] = d.ax
             localDisp[m.id] = ul
@@ -329,37 +390,6 @@ object FrameSolver {
         for (nl in model.nodalLoads) for (a in 0 until 3) totalLoad[a] += nl.values[a]
 
         return FrameResults(model, nodeDisp, reactions, endForces, udl, axesMap, localDisp, totalLoad, points)
-    }
-
-    /** Solve K_rr·u_r = F_r − K_rc·u_c for the released end rotations and write them into [ul]. */
-    private fun recoverReleased(k: Array<DoubleArray>, feq: DoubleArray, ul: DoubleArray, rel: IntArray) {
-        val n = rel.size
-        val a = Array(n) { i -> DoubleArray(n) { j -> k[rel[i]][rel[j]] } }
-        val b = DoubleArray(n) { i ->
-            var s = feq[rel[i]]
-            for (c in 0 until 12) if (c !in rel) s -= k[rel[i]][c] * ul[c]
-            s
-        }
-        // Gaussian elimination with partial pivoting (n ≤ 4)
-        for (col in 0 until n) {
-            var p = col
-            for (r in col + 1 until n) if (abs(a[r][col]) > abs(a[p][col])) p = r
-            val tmp = a[col]; a[col] = a[p]; a[p] = tmp
-            val tb = b[col]; b[col] = b[p]; b[p] = tb
-            if (abs(a[col][col]) < 1e-30) return
-            for (r in col + 1 until n) {
-                val fct = a[r][col] / a[col][col]
-                for (c in col until n) a[r][c] -= fct * a[col][c]
-                b[r] -= fct * b[col]
-            }
-        }
-        val x = DoubleArray(n)
-        for (i in n - 1 downTo 0) {
-            var s = b[i]
-            for (c in i + 1 until n) s -= a[i][c] * x[c]
-            x[i] = s / a[i][i]
-        }
-        for (i in 0 until n) ul[rel[i]] = x[i]
     }
 
     /** In-place Cholesky solve of an SPD system. */
@@ -476,6 +506,18 @@ class FrameResults(
                 val g = fixedFixedPointDeflection(s, p.a, l)
                 v += p.f.y * g / eiz
                 wz += p.f.z * g / eiy
+            }
+            if (model.beamTheory == BeamTheory.TIMOSHENKO) {
+                // shear deflection of the fixed-ended member under its own loads (Timoshenko)
+                val g = m.material.g
+                val shearBubble = s * (l - s) / 2.0
+                if (m.section.asy > 0) v += w.y * shearBubble / (g * m.section.asy)
+                if (m.section.asz > 0) wz += w.z * shearBubble / (g * m.section.asz)
+                for (p in pts) {
+                    val lin = if (s <= p.a) (l - p.a) / l * s else p.a / l * (l - s)
+                    if (m.section.asy > 0) v += p.f.y * lin / (g * m.section.asy)
+                    if (m.section.asz > 0) wz += p.f.z * lin / (g * m.section.asz)
+                }
             }
             val u = ul[0] * (1 - xi) + ul[6] * xi
             p0 + ax.x * s + ax.toGlobal(Vec3(u, v, wz)) * scale

@@ -49,7 +49,7 @@ import kotlin.math.min
 import kotlin.math.sin
 
 enum class ResultView(val label: String) {
-    MODEL("Model"), DEFORMED("Deformed"), N("N"), VZ("Vz"), MY("My"), VY("Vy"), MZ("Mz"), BUCKLING("Buckling mode")
+    MODEL("Model"), DEFORMED("Deformed"), N("N"), VZ("Vz"), MY("My"), VY("Vy"), MZ("Mz"), BUCKLING("Buckling mode"), MODAL("Mode shape")
 }
 
 private fun value(st: Station, v: ResultView): Double = when (v) {
@@ -206,6 +206,8 @@ fun FrameView3D(
     pendingNode: Int? = null,
     buckling: BucklingResult? = null,
     onTap: ((TapInfo) -> Unit)? = null,
+    modeShape: Map<Int, List<Pair<Vec3, Vec3>>>? = null,
+    modeLabel: String = "",
 ) {
     var canvasSize by remember { mutableStateOf(Size(1f, 1f)) }
     val tapCallback by rememberUpdatedState(onNodeTap)
@@ -223,7 +225,7 @@ fun FrameView3D(
         animationSpec = infiniteRepeatable(tween(1300, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "phase",
     )
-    val phase = grow.value * (if (animate && (view == ResultView.DEFORMED || view == ResultView.BUCKLING)) osc else 1f)
+    val phase = grow.value * (if (animate && (view == ResultView.DEFORMED || view == ResultView.BUCKLING || view == ResultView.MODAL)) osc else 1f)
 
     val ink = Color(0xFF1B2A41)
     val pos = Color(0xFFC62828)
@@ -292,10 +294,11 @@ fun FrameView3D(
             }
             loads(pj, model, loadColor)
 
-            if (view == ResultView.BUCKLING) {
-                val b = buckling ?: return@Canvas
-                val k = 0.12 * modelSize * phase
-                for ((_, pts) in b.modeShape) {
+            if (view == ResultView.BUCKLING || view == ResultView.MODAL) {
+                val shape = (if (view == ResultView.MODAL) modeShape else buckling?.modeShape) ?: return@Canvas
+                val label = if (view == ResultView.MODAL) modeLabel else buckling?.let { "λcr = ${"%.3f".format(it.lambda)}  (${it.combination})" } ?: ""
+                val k = 0.12 * modelSize * (if (view == ResultView.MODAL && animate) (2 * osc - 1) * grow.value else phase)
+                for ((_, pts) in shape) {
                     val poly = pts.map { (p, d) -> pj.screen(p + d * k) }
                     for (a in 1 until poly.size) {
                         val t = ((pts[a].second.length + pts[a - 1].second.length) / 2).toFloat()
@@ -304,7 +307,7 @@ fun FrameView3D(
                 }
                 drawIntoCanvas {
                     it.nativeCanvas.drawText(
-                        "λcr = ${"%.3f".format(b.lambda)}  (${b.combination})", 16f, 36f,
+                        label, 16f, 36f,
                         Paint().apply { textSize = 30f; isAntiAlias = true; color = android.graphics.Color.BLACK },
                     )
                 }
@@ -314,7 +317,7 @@ fun FrameView3D(
             if (results == null) return@Canvas
 
             when (view) {
-                ResultView.MODEL, ResultView.BUCKLING -> {}
+                ResultView.MODEL, ResultView.BUCKLING, ResultView.MODAL -> {}
                 ResultView.DEFORMED -> {
                     val maxD = max(results.maxDisplacement().second, results.maxMemberDeflection())
                     val k = if (deformScale > 0) deformScale else if (maxD > 1e-12) 0.08 * modelSize / maxD else 1.0

@@ -54,6 +54,7 @@ import com.structura.app.ui.fem.ResultsSummary
 import com.structura.app.ui.fem.TapInfo
 import com.structura.app.ui.fem.WorkPlane
 import com.structura.app.ui.theme.FailRed
+import com.structura.core.fem.BeamTheory
 import com.structura.core.fem.Buckling
 import com.structura.core.fem.BucklingResult
 import com.structura.core.fem.FemReport
@@ -67,6 +68,8 @@ import com.structura.core.fem.LoadCombination
 import com.structura.core.fem.LoadDir
 import com.structura.core.fem.Material
 import com.structura.core.fem.MemberEnvelope
+import com.structura.core.fem.Modal
+import com.structura.core.fem.ModalResult
 import com.structura.core.fem.ModelEditor
 import com.structura.core.fem.ModelEditor.SupportType
 import com.structura.core.fem.Section
@@ -106,9 +109,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
     var plane by remember { mutableStateOf(Plane.XY) }
     var offset by remember { mutableStateOf("0") }
     var snapTxt by remember { mutableStateOf("1.0") }
-    var secB by remember { mutableStateOf("300") }
-    var secD by remember { mutableStateOf("450") }
-    var fck by remember { mutableStateOf("25") }
+    val spec = remember { SectionSpec() }
     var fx by remember { mutableStateOf("0") }
     var fy by remember { mutableStateOf("0") }
     var fz by remember { mutableStateOf("-10") }
@@ -128,21 +129,24 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
     var view by remember { mutableStateOf(ResultView.MODEL) }
     var busy by remember { mutableStateOf(false) }
     var animate by remember { mutableStateOf(true) }
+    var modal by remember { mutableStateOf<ModalResult?>(null) }
+    var modeIdx by remember { mutableStateOf(0) }
+    var llMass by remember { mutableStateOf(0.25) }
 
     fun d(s: String, def: Double = 0.0) = s.replace(',', '.').toDoubleOrNull() ?: def
 
     fun commit(m: FrameModel, msg: String? = null) {
         history = (history.take(pos + 1) + m).takeLast(80)
         pos = history.size - 1
-        results = null; buckling = null; env = emptyList()
+        results = null; buckling = null; env = emptyList(); modal = null
         if (view != ResultView.MODEL) view = ResultView.MODEL
         message = msg
     }
 
     val wp = WorkPlane(plane, d(offset), d(snapTxt, 1.0).coerceAtLeast(0.05), visible = tool != Tool.SELECT || model.nodes.isEmpty())
 
-    fun material() = Material.concrete(d(fck, 25.0))
-    fun section() = Section.rect(d(secB, 300.0) / 1000, d(secD, 450.0) / 1000)
+    fun material() = spec.material()
+    fun section() = spec.section()
 
     fun onTap(t: TapInfo) {
         when (tool) {
@@ -162,7 +166,8 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 } else if (p0 == target) {
                     pending = null; message = "Member chain finished"
                 } else {
-                    val (m2, mid) = ModelEditor.addMember(m, p0, target, material(), section())
+                    val sec = runCatching { section() }.getOrElse { message = it.message; return }
+                    val (m2, mid) = ModelEditor.addMember(m, p0, target, material(), sec)
                     commit(m2, if (mid != null) "Member M$mid: N$p0 → N$target" else "Member already exists")
                     pending = target
                 }
@@ -219,6 +224,17 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
         val c = combos.getOrNull(k) ?: return
         scope.launch {
             try { results = withContext(Dispatchers.Default) { FrameSolver.analyse(model, c) } } catch (e: Exception) { message = e.message }
+        }
+    }
+
+    fun runModal() {
+        busy = true
+        scope.launch {
+            try {
+                modal = withContext(Dispatchers.Default) { Modal.analyse(model, nModes = 6, llFactor = llMass, segments = 4) }
+                modeIdx = 0
+                view = ResultView.MODAL
+            } catch (e: Exception) { message = e.message } finally { busy = false }
         }
     }
 
@@ -288,6 +304,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                     val html = HtmlReport.build(
                         model, results?.let { r -> (combos.getOrNull(comboIdx) ?: LoadCombination.ALL) to r }, env,
                         combos.ifEmpty { LoadCombination.isLimitState(LoadCase.WL in model.loadCases) }, buckling,
+                        modal = modal,
                     )
                     shareTextFile(context, "StructuraAI_report.html", "text/html", html, "Structura AI — analysis report")
                 }, label = { Text("↓ HTML report") })
@@ -298,12 +315,13 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 FilterChip(false, { camera.top(); plane = Plane.XY }, { Text("Top XY") })
                 FilterChip(false, { camera.front(); plane = Plane.XZ }, { Text("Front XZ") })
                 FilterChip(false, { camera.right(); plane = Plane.YZ }, { Text("Right YZ") })
-                if (results != null || buckling != null) {
+                if (results != null || buckling != null || modal != null) {
                     Spacer(Modifier.padding(4.dp))
                     ResultView.entries.forEach { v ->
                         val enabled = when (v) {
                             ResultView.MODEL -> true
                             ResultView.BUCKLING -> buckling != null
+                            ResultView.MODAL -> modal != null
                             else -> results != null
                         }
                         FilterChip(v == view, { view = v }, { Text(v.label) }, enabled = enabled)
@@ -322,6 +340,8 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                     pendingNode = pending,
                     buckling = buckling,
                     onTap = { onTap(it) },
+                    modeShape = modal?.modes?.getOrNull(modeIdx)?.shape,
+                    modeLabel = modal?.modes?.getOrNull(modeIdx)?.let { "Mode ${it.number}: f = ${"%.3f".format(it.frequency)} Hz, T = ${"%.3f".format(it.period)} s" } ?: "",
                 )
             }
             Text(
@@ -345,12 +365,8 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Num("Offset (m)", offset, Modifier.weight(1f)) { offset = it }
                     Num("Snap (m)", snapTxt, Modifier.weight(1f)) { snapTxt = it }
-                    if (tool == Tool.MEMBER) {
-                        Num("b (mm)", secB, Modifier.weight(1f)) { secB = it }
-                        Num("D (mm)", secD, Modifier.weight(1f)) { secD = it }
-                        Num("fck", fck, Modifier.weight(1f)) { fck = it }
-                    }
                 }
+                if (tool == Tool.MEMBER) SectionPicker(spec)
             }
             if (tool == Tool.LOAD || tool == Tool.UDL) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -382,9 +398,44 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 Switch(checked = animate, onCheckedChange = { animate = it })
                 Text("  Animate", style = MaterialTheme.typography.bodySmall)
             }
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Beam theory", style = MaterialTheme.typography.labelMedium)
+                BeamTheory.entries.forEach { t ->
+                    FilterChip(t == model.beamTheory, { if (t != model.beamTheory) commit(model.copy(beamTheory = t), "Beam theory: ${t.label}") }, { Text(t.label) })
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { analyse() }, enabled = !busy, modifier = Modifier.weight(1f)) { Text("▶ Analyse") }
                 OutlinedButton(onClick = { runBuckling() }, enabled = !busy && model.members.isNotEmpty(), modifier = Modifier.weight(1f)) { Text("Buckling λcr") }
+                OutlinedButton(onClick = { runModal() }, enabled = !busy && model.members.isNotEmpty(), modifier = Modifier.weight(1f)) { Text("♫ Modal") }
+            }
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Modal mass: DL + LL ×", style = MaterialTheme.typography.labelMedium)
+                listOf(0.25, 0.5).forEach { f -> FilterChip(f == llMass, { llMass = f; modal = null }, { Text("$f") }) }
+                Text("(IS 1893 Table 10: 0.25 for ≤ 3 kN/m², 0.5 above)", style = MaterialTheme.typography.labelSmall)
+            }
+            modal?.let { md ->
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    md.modes.forEachIndexed { k, mo ->
+                        FilterChip(k == modeIdx && view == ResultView.MODAL, { modeIdx = k; view = ResultView.MODAL }, { Text("Mode ${mo.number}: ${"%.2f".format(mo.frequency)} Hz") })
+                    }
+                }
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(10.dp)) {
+                        Text("Modal analysis — mass: ${md.massSource}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                        Text(" Mode   f (Hz)    T (s)   Mx%   My%   Mz%", fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                        md.modes.forEach { mo ->
+                            Text(
+                                String.format(Locale.US, "%4d %8.3f %8.4f %5.1f %5.1f %5.1f", mo.number, mo.frequency, mo.period,
+                                    mo.participation[0] * 100, mo.participation[1] * 100, mo.participation[2] * 100),
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        val c = md.cumulative
+                        Text(String.format(Locale.US, "Cumulative: X %.1f %%, Y %.1f %%, Z %.1f %% (IS 1893 Cl. 7.7.5.2: ≥ 90 %%)", c[0] * 100, c[1] * 100, c[2] * 100),
+                            style = MaterialTheme.typography.labelSmall)
+                    }
+                }
             }
             if (busy) CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
             buckling?.let {
@@ -451,22 +502,25 @@ private fun NodeEditor(model: FrameModel, id: Int, onApply: (FrameModel, String)
 @Composable
 private fun MemberEditor(model: FrameModel, id: Int, onApply: (FrameModel, String) -> Unit, onClose: () -> Unit) {
     val m = model.members.first { it.id == id }
-    var b by remember(id, m) { mutableStateOf(if (m.section.b > 0) fmt(m.section.b * 1000) else "300") }
-    var h by remember(id, m) { mutableStateOf(if (m.section.h > 0) fmt(m.section.h * 1000) else "450") }
+    val spec = remember(id, m) { SectionSpec().also { it.from(m.section, m.material) } }
+    var ki by remember(id, m) { mutableStateOf(m.springI?.let { fmt(it) } ?: "") }
+    var kj by remember(id, m) { mutableStateOf(m.springJ?.let { fmt(it) } ?: "") }
     val len = (model.node(m.j).pos - model.node(m.i).pos).length
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Member M$id  N${m.i} → N${m.j}, L = ${fmt(len)} m, ${m.section.name}, ${m.material.name}", fontWeight = FontWeight.SemiBold)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Num("b (mm)", b, Modifier.weight(1f)) { b = it }
-                Num("D (mm)", h, Modifier.weight(1f)) { h = it }
-            }
+            SectionPicker(spec)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(m.hingeI, { v -> onApply(ModelEditor.updateMember(model, id) { it.copy(hingeI = v) }, "M$id hinge at i: $v") })
                 Text("  Hinge i   ", style = MaterialTheme.typography.bodySmall)
                 Switch(m.hingeJ, { v -> onApply(ModelEditor.updateMember(model, id) { it.copy(hingeJ = v) }, "M$id hinge at j: $v") })
                 Text("  Hinge j", style = MaterialTheme.typography.bodySmall)
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Num("Spring i (kN·m/rad)", ki, Modifier.weight(1f)) { ki = it }
+                Num("Spring j (kN·m/rad)", kj, Modifier.weight(1f)) { kj = it }
+            }
+            Text("Rotational springs make semi-rigid joints (blank = rigid). A hinge overrides the spring.", style = MaterialTheme.typography.labelSmall)
             val loads = model.memberLoads.filter { it.member == id }
             val pts = model.pointLoads.filter { it.member == id }
             if (loads.isNotEmpty() || pts.isNotEmpty()) Text(
@@ -474,11 +528,20 @@ private fun MemberEditor(model: FrameModel, id: Int, onApply: (FrameModel, Strin
                     pts.map { "${it.case}: P ${fmt(it.p)} kN at ${fmt(it.a)} m" }).joinToString("\n"),
                 style = MaterialTheme.typography.bodySmall,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedButton(onClick = {
-                    val bb = (b.toDoubleOrNull() ?: 300.0) / 1000; val hh = (h.toDoubleOrNull() ?: 450.0) / 1000
-                    onApply(ModelEditor.updateMember(model, id) { it.copy(section = Section.rect(bb, hh)) }, "M$id section ${b}×$h")
-                }) { Text("Apply section") }
+                    val sec = runCatching { spec.section() }.getOrNull() ?: return@OutlinedButton
+                    val mat = spec.material()
+                    val si = ki.replace(',', '.').toDoubleOrNull()?.takeIf { it >= 0 }
+                    val sj = kj.replace(',', '.').toDoubleOrNull()?.takeIf { it >= 0 }
+                    onApply(ModelEditor.updateMember(model, id) { it.copy(section = sec, material = mat, springI = si, springJ = sj) },
+                        "M$id: ${sec.name}, ${mat.name}")
+                }) { Text("Apply") }
+                OutlinedButton(onClick = {
+                    val sec = runCatching { spec.section() }.getOrNull() ?: return@OutlinedButton
+                    val mat = spec.material()
+                    onApply(model.copy(members = model.members.map { it.copy(section = sec, material = mat) }), "All members: ${sec.name}, ${mat.name}")
+                }) { Text("Apply to all") }
                 if (loads.isNotEmpty() || pts.isNotEmpty()) OutlinedButton(onClick = { onApply(ModelEditor.clearLoadsOnMember(model, id), "Loads on M$id cleared") }) { Text("Clear loads") }
                 OutlinedButton(onClick = onClose) { Text("Close") }
             }

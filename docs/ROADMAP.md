@@ -27,8 +27,10 @@ Each step is built, tested and committed separately.
 - [x] 3.3c Interactive live loads with animated 3D deformation
 - [x] 3.3b 3D Studio: node/member editor with work planes, snap, split, supports, loads, undo/redo, project save/open, HTML report
 - [x] 3.3d Global elastic buckling λcr with mode shape
-- [ ] 3.3e Modal analysis (natural frequencies, IS 1893 response spectrum)
-- [ ] 3.3f Timoshenko beams, FRP / steel hollow-section catalogue, rigid end offsets, rotational springs
+- [x] 3.3e Modal analysis (frequencies, mode shapes, mass participation)
+- [ ] 3.3e2 IS 1893 response spectrum (CQC) from the modal results
+- [x] 3.3f Timoshenko beams, hollow-section catalogue (steel + GFRP), rotational end springs
+- [ ] 3.3f2 Rigid end offsets, piecewise (trapezoidal) member loads
 - [ ] 3.3g Q4 flat-shell panels (slabs / walls) with panel mesh and pressure loads
 - [ ] 3.4 AI explains results and sanity-checks them (load path, unusual ratios, missing combinations)
 

@@ -252,7 +252,7 @@ fun FemScreen(onBack: () -> Unit, onDesignBeam: () -> Unit, onStudio: () -> Unit
                     }
                 }
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ResultView.entries.forEach { v ->
+                    ResultView.entries.filter { it != ResultView.BUCKLING && it != ResultView.MODAL }.forEach { v ->
                         FilterChip(
                             selected = v == view, onClick = { view = v }, label = { Text(v.label) },
                             enabled = v == ResultView.MODEL || results != null,

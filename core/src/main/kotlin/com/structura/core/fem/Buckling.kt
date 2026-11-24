@@ -23,7 +23,7 @@ class BucklingResult(
  * Euler–Bernoulli members (Przemieniecki / McGuire, Gallagher & Ziemian, Matrix Structural
  * Analysis 2nd ed., Eq. 9.18) built from the axial forces of a first-order analysis.
  * Each member is subdivided into [segments] elements so member (local) buckling is captured.
- * Moment-hinge releases are not applied to Kg (conservative for most frames) — noted in reports.
+ * End hinges / springs are applied to K but not to Kg (geometric stiffness of a released end is small).
  */
 object Buckling {
 
@@ -58,8 +58,7 @@ object Buckling {
         val kg = Array(nDof) { DoubleArray(nDof) }
         for (m in mesh.members) {
             val ax = FrameSolver.axes(mesh, m)
-            val kl = FrameSolver.localStiffness(m, ax.length)
-            FrameSolver.condense(kl, DoubleArray(12), FrameSolver.releasedDofs(m))
+            val kl = FrameSolver.endCondensation(m, FrameSolver.localStiffness(m, ax.length, mesh.beamTheory), DoubleArray(12)).k
             val fe = lin.memberEndForces[m.id]!!
             val p = (-fe[0] + fe[6]) / 2.0                        // axial force, tension +
             val kgl = geometricStiffness(p, ax.length, m.section)

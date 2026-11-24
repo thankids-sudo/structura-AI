@@ -90,6 +90,13 @@ Same workflow as the Structura AI web version:
 - **Edit a selection:** node coordinates and support type; member section b × D and hinges at i / j; clear loads.
 - **Analysis:** IS 456 Table 18 combinations, ULS envelope, animated deformed shape, N/V/M diagrams, and **global buckling λcr** with the animated mode shape. Buckling uses a consistent geometric stiffness, 4 elements per member and inverse iteration, and is verified against Euler's π²EI/4L² cantilever.
 
+### Batch A additions
+- **Beam theory:** Euler–Bernoulli or **Timoshenko** (shear deformable). Φ = 12EI/(G·As·L²) is applied to stiffness and point-load fixed-end forces. This matters for FRP, where G/E is low. Verified: cantilever PL³/3EI + PL/(G·As), and simply supported UDL 5wL⁴/384EI + wL²/(8G·As).
+- **Sections:** rectangle, CHS, SHS and RHS, all from dimensions, plus a catalogue: steel IS 4923 SHS/RHS, IS 1161 CHS, and typical GFRP tubes. Shear areas and Bredt torsion constants are included. Properties assume sharp corners; verify them against the code tables or the manufacturer.
+- **Materials:** concrete (IS 456 E = 5000√fck), steel E250, GFRP (illustrative E 23 GPa / G 3.5 GPa / γ 19) and custom E/G/γ.
+- **Semi-rigid joints:** rotational springs (kN·m/rad) at member ends, by 16-DOF static condensation; a hinge is a spring of 0. Verified: k = 2EI/L gives an end moment of wL²/24.
+- **Modal analysis:** consistent mass matrices and subspace iteration. Output: frequencies, periods, mass participation X/Y/Z with cumulative %, and animated mode shapes. Mass = self-weight + DL + 0.25 or 0.5 LL (IS 1893 Table 10). Verified against the cantilever (1.875²) and simply supported (π²) beam frequencies.
+
 ## Detail drawing (UCS-based, DXF)
 
 - Every view has its own **named UCS**: `ELEVATION` (origin at the soffit, outer face of the left support), `SECTION_A-A` (origin at the bottom-left corner of the section), and `NOTES`.

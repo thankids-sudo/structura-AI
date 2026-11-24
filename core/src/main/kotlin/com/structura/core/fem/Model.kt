@@ -1,5 +1,6 @@
 package com.structura.core.fem
 
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -51,6 +52,16 @@ data class Material(val name: String, val e: Double, val g: Double, val gamma: D
 
         /** Structural steel: E = 2×10⁵ MPa, G = 0.769×10⁵ MPa (IS 800 Cl. 2.2.4.1), γ = 78.5 kN/m³. */
         fun steel(fy: Double = 250.0) = Material("E${fy.toInt()}", 2.0e8, 0.769e8, 78.5)
+
+        /**
+         * Pultruded GFRP — ILLUSTRATIVE longitudinal values (E ≈ 23 GPa, G ≈ 3.5 GPa, γ ≈ 19 kN/m³),
+         * typical of EN 13706 grade E23 profiles. Replace with the manufacturer's tested values.
+         */
+        fun gfrp() = Material("GFRP (illustrative)", 23.0e6, 3.5e6, 19.0)
+
+        /** User-defined material from MPa and kN/m³. */
+        fun custom(name: String, eMpa: Double, gMpa: Double, gamma: Double) = Material(name, eMpa * 1000, gMpa * 1000, gamma)
+    }
     }
 }
 
@@ -60,17 +71,53 @@ data class Material(val name: String, val e: Double, val g: Double, val gamma: D
  */
 data class Section(
     val name: String, val a: Double, val iy: Double, val iz: Double, val j: Double,
-    /** Overall width / depth (m) for rectangles; 0 for other shapes. */
+    /** Overall width (along local y) / depth (along local z), m. */
     val b: Double = 0.0, val h: Double = 0.0,
+    /** Shear areas for Timoshenko theory (m²) for shear along local y / z; 0 = shear-rigid. */
+    val asy: Double = 0.0, val asz: Double = 0.0,
+    /** RECT, CHS, SHS, RHS or GENERAL; [t] = wall thickness (m) for tubes. */
+    val shape: String = "GENERAL", val t: Double = 0.0,
 ) {
+    val isSolidRectangle: Boolean get() = shape == "RECT"
+
     companion object {
+        /** Circular hollow section: outside diameter [d], wall [t] (m). J = 2I (exact), shear area A/2. */
+        fun chs(d: Double, t: Double, name: String = "CHS ${mm(d)}×${mm(t)}"): Section {
+            require(t > 0 && 2 * t < d) { "CHS wall must be > 0 and < D/2" }
+            val di = d - 2 * t
+            val a = Math.PI / 4 * (d * d - di * di)
+            val i = Math.PI / 64 * (d.pow(4) - di.pow(4))
+            return Section(name, a, i, i, 2 * i, d, d, a / 2, a / 2, "CHS", t)
+        }
+
+        /**
+         * Rectangular hollow section [b] (along local y) × [h] (along local z), wall [t] (m), sharp corners.
+         * J by Bredt's thin-wall formula 4·Am²·t / pm; shear areas A·h/(b+h) (webs) and A·b/(b+h).
+         */
+        fun rhs(b: Double, h: Double, t: Double, name: String = (if (b == h) "SHS ${mm(b)}×${mm(t)}" else "RHS ${mm(h)}×${mm(b)}×${mm(t)}")): Section {
+            require(t > 0 && 2 * t < min(b, h)) { "Tube wall must be > 0 and < half the smaller side" }
+            val bi = b - 2 * t; val hi = h - 2 * t
+            val a = b * h - bi * hi
+            val iy = (b * h.pow(3) - bi * hi.pow(3)) / 12
+            val iz = (h * b.pow(3) - hi * bi.pow(3)) / 12
+            val am = (b - t) * (h - t)
+            val pm = 2 * ((b - t) + (h - t))
+            val jt = 4 * am * am * t / pm
+            return Section(name, a, iy, iz, jt, b, h, a * b / (b + h), a * h / (b + h), if (b == h) "SHS" else "RHS", t)
+        }
+
+        private fun mm(v: Double): String {
+            val x = v * 1000
+            return if (abs(x - Math.round(x)) < 1e-6) Math.round(x).toString() else String.format(java.util.Locale.US, "%.1f", x)
+        }
+
         /** Rectangle: [b] along local y (width), [h] along local z (depth). Dimensions in metres. */
         fun rect(b: Double, h: Double, name: String = "R ${(b * 1000).toInt()}×${(h * 1000).toInt()}"): Section {
             val a = max(b, h)
             val t = min(b, h)
             // St Venant torsion constant of a rectangle (Roark, Table 10.7)
             val jt = a * t.pow(3) * (1.0 / 3.0 - 0.21 * (t / a) * (1 - t.pow(4) / (12 * a.pow(4))))
-            return Section(name, b * h, b * h.pow(3) / 12.0, h * b.pow(3) / 12.0, jt, b, h)
+            return Section(name, b * h, b * h.pow(3) / 12.0, h * b.pow(3) / 12.0, jt, b, h, 5.0 / 6 * b * h, 5.0 / 6 * b * h, "RECT")
         }
     }
 }
@@ -88,7 +135,20 @@ data class Member(
     val betaDeg: Double = 0.0,
     val hingeI: Boolean = false,
     val hingeJ: Boolean = false,
-)
+    /** Rotational spring at end i / j (kN·m/rad, about local y and z); null = rigid joint. Semi-rigid connection. */
+    val springI: Double? = null,
+    val springJ: Double? = null,
+) {
+    /** Effective end condition: null = rigid, 0 = hinge, > 0 = spring stiffness. */
+    val endI: Double? get() = if (hingeI) 0.0 else springI
+    val endJ: Double? get() = if (hingeJ) 0.0 else springJ
+}
+
+/** Beam theory used for member stiffness. */
+enum class BeamTheory(val label: String) {
+    EULER("Euler–Bernoulli"),
+    TIMOSHENKO("Timoshenko (shear deformable)"),
+}
 
 /** Six restraints in global axes: ux, uy, uz, φx, φy, φz (true = fixed). */
 data class Support(val node: Int, val restraints: List<Boolean>) {
@@ -170,6 +230,7 @@ data class FrameModel(
     val pointLoads: List<PointLoad> = emptyList(),
     /** Multiplier on self-weight (set by load combinations). */
     val selfWeightFactor: Double = 1.0,
+    val beamTheory: BeamTheory = BeamTheory.EULER,
 ) {
     /** Load cases present in this model (DL is always present when self-weight is on). */
     val loadCases: Set<String>
