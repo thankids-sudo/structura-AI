@@ -62,7 +62,6 @@ data class Material(val name: String, val e: Double, val g: Double, val gamma: D
         /** User-defined material from MPa and kN/m³. */
         fun custom(name: String, eMpa: Double, gMpa: Double, gamma: Double) = Material(name, eMpa * 1000, gMpa * 1000, gamma)
     }
-    }
 }
 
 /**
