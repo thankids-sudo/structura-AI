@@ -72,7 +72,7 @@ enum class Template(val label: String) { BEAM("Continuous beam"), PORTAL("2D por
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FemScreen(onBack: () -> Unit, onDesignBeam: () -> Unit) {
+fun FemScreen(onBack: () -> Unit, onDesignBeam: () -> Unit, onStudio: () -> Unit = {}) {
     var template by rememberSaveable { mutableStateOf(Template.PORTAL) }
     var spans by rememberSaveable { mutableStateOf("5, 5") }
     var baysY by rememberSaveable { mutableStateOf("4") }
@@ -235,6 +235,10 @@ fun FemScreen(onBack: () -> Unit, onDesignBeam: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
             )
             Button(onClick = { run() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Generate & analyse") }
+            OutlinedButton(onClick = {
+                val m = baseModel ?: runCatching { build() }.getOrNull()
+                if (m == null) error = "Check inputs" else { DesignSession.studioModel = m; onStudio() }
+            }, modifier = Modifier.fillMaxWidth()) { Text("Open this model in 3D Studio (edit nodes, members, loads)") }
             if (busy) CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
             error?.let { Text(it, color = FailRed) }
 
@@ -311,7 +315,7 @@ fun FemScreen(onBack: () -> Unit, onDesignBeam: () -> Unit) {
 }
 
 @Composable
-private fun ResultsSummary(r: FrameResults, uls: List<MemberEnvelope>, onDesignBeam: () -> Unit) {
+internal fun ResultsSummary(r: FrameResults, uls: List<MemberEnvelope>, onDesignBeam: () -> Unit) {
     val eq = r.equilibriumError
     val ok = eq.all { abs(it) < 1e-3 * (1 + abs(r.totalLoad[2])) }
     val mono = FontFamily.Monospace

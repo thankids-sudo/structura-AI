@@ -25,7 +25,11 @@ Each step is built, tested and committed separately.
 - [x] 3.3 Critical beam from FEM handed to the IS 456 beam designer
 - [x] 3.3a Member end hinges, point loads on members, DL/LL/WL load cases, IS 456 Table 18 combinations, ULS envelope
 - [x] 3.3c Interactive live loads with animated 3D deformation
-- [ ] 3.3b Node/member editor (free-form models like RFEM), plate/shell elements for slabs
+- [x] 3.3b 3D Studio: node/member editor with work planes, snap, split, supports, loads, undo/redo, project save/open, HTML report
+- [x] 3.3d Global elastic buckling λcr with mode shape
+- [ ] 3.3e Modal analysis (natural frequencies, IS 1893 response spectrum)
+- [ ] 3.3f Timoshenko beams, FRP / steel hollow-section catalogue, rigid end offsets, rotational springs
+- [ ] 3.3g Q4 flat-shell panels (slabs / walls) with panel mesh and pressure loads
 - [ ] 3.4 AI explains results and sanity-checks them (load path, unusual ratios, missing combinations)
 
 ## Phase 4: Drawing → Structure AI

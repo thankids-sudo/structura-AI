@@ -18,13 +18,18 @@ object DesignSession {
     var prefill: Prefill? = null
 
     fun takePrefill(): Prefill? = prefill.also { prefill = null }
+
+    /** Model handed from the template wizard to the 3D Studio editor. */
+    var studioModel: com.structura.core.fem.FrameModel? = null
+
+    fun takeStudioModel() = studioModel.also { studioModel = null }
 }
 
 /** Writes [content] to cache/exports/[fileName] and opens the Android share sheet. */
 fun shareTextFile(context: Context, fileName: String, mime: String, content: String, subject: String) {
     val dir = File(context.cacheDir, "exports").apply { mkdirs() }
     val file = File(dir, fileName)
-    file.writeText(content, Charsets.US_ASCII)
+    file.writeText(content, Charsets.UTF_8)
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     val send = Intent(Intent.ACTION_SEND).apply {
         type = mime

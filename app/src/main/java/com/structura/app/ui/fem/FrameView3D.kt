@@ -35,7 +35,9 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import com.structura.core.fem.BucklingResult
 import com.structura.core.fem.FrameModel
+import com.structura.core.fem.Node
 import com.structura.core.fem.FrameResults
 import com.structura.core.fem.LoadDir
 import com.structura.core.fem.Station
@@ -47,7 +49,7 @@ import kotlin.math.min
 import kotlin.math.sin
 
 enum class ResultView(val label: String) {
-    MODEL("Model"), DEFORMED("Deformed"), N("N"), VZ("Vz"), MY("My"), VY("Vy"), MZ("Mz")
+    MODEL("Model"), DEFORMED("Deformed"), N("N"), VZ("Vz"), MY("My"), VY("Vy"), MZ("Mz"), BUCKLING("Buckling mode")
 }
 
 private fun value(st: Station, v: ResultView): Double = when (v) {
@@ -60,7 +62,10 @@ private fun value(st: Station, v: ResultView): Double = when (v) {
 }
 
 /** Orthographic orbit projection shared by drawing and hit-testing. */
-class Projector(model: FrameModel, yawDeg: Float, pitchDeg: Float, zoom: Float, private val w: Float, private val h: Float) {
+class Projector(
+    model: FrameModel, yawDeg: Float, pitchDeg: Float, zoom: Float,
+    private val w: Float, private val h: Float, extra: List<Vec3> = emptyList(),
+) {
     private val cy = cos(Math.toRadians(yawDeg.toDouble()))
     private val sy = sin(Math.toRadians(yawDeg.toDouble()))
     private val cp = cos(Math.toRadians(pitchDeg.toDouble()))
@@ -77,14 +82,41 @@ class Projector(model: FrameModel, yawDeg: Float, pitchDeg: Float, zoom: Float, 
     }
 
     init {
-        val pts = model.nodes.map { proj(it.pos) }
+        val all = model.nodes.map { it.pos } + extra
+        val src = all.ifEmpty { listOf(Vec3.ZERO, Vec3(6.0, 6.0, 3.0)) }
+        val pts = src.map { proj(it) }
         val minX = pts.minOf { it.first }; val maxX = pts.maxOf { it.first }
         val minY = pts.minOf { it.second }; val maxY = pts.maxOf { it.second }
         val span = max(maxX - minX, maxY - minY).coerceAtLeast(1.0)
         scale = min(w, h) * 0.62 / span * zoom
         cx = (minX + maxX) / 2; cyy = (minY + maxY) / 2
-        val xs = model.nodes.map { it.x }; val ys = model.nodes.map { it.y }; val zs = model.nodes.map { it.z }
+        val xs = src.map { it.x }; val ys = src.map { it.y }; val zs = src.map { it.z }
         modelSize = maxOf(xs.max() - xs.min(), ys.max() - ys.min(), zs.max() - zs.min()).coerceAtLeast(1.0)
+    }
+
+    /** Screen point → world point on a work plane (null if the plane is seen edge-on). */
+    fun onPlane(s: Offset, plane: Plane, offset: Double): Vec3? {
+        val sx = (s.x - w / 2) / scale + cx
+        val up = -(s.y - h / 2) / scale + cyy
+        return when (plane) {
+            Plane.XY -> {
+                if (abs(sp) < 0.08) return null
+                val depth = (up - offset * cp) / sp
+                Vec3(sx * cy - depth * sy, sx * sy + depth * cy, offset)
+            }
+            Plane.XZ -> {
+                if (abs(cy) < 0.08 || abs(cp) < 0.08) return null
+                val x = (sx - offset * sy) / cy
+                val depth = -x * sy + offset * cy
+                Vec3(x, offset, (up - depth * sp) / cp)
+            }
+            Plane.YZ -> {
+                if (abs(sy) < 0.08 || abs(cp) < 0.08) return null
+                val y = (sx - offset * cy) / sy
+                val depth = -offset * sy + y * cy
+                Vec3(offset, y, (up - depth * sp) / cp)
+            }
+        }
     }
 
     fun screen(p: Vec3): Offset {
@@ -97,6 +129,51 @@ class Projector(model: FrameModel, yawDeg: Float, pitchDeg: Float, zoom: Float, 
         val (x, y) = proj(v)
         return Offset((x * scale).toFloat(), (-y * scale).toFloat())
     }
+}
+
+enum class Plane(val label: String) { XY("XY (plan)"), XZ("XZ (front)"), YZ("YZ (side)") }
+
+/** Work plane for placing nodes: plane, offset along its normal, snap spacing (m). */
+data class WorkPlane(val plane: Plane = Plane.XY, val offset: Double = 0.0, val snap: Double = 1.0, val visible: Boolean = true)
+
+/** What a tap hit: nearest node / member within reach, and the snapped point on the work plane. */
+data class TapInfo(val node: Int?, val member: Int?, val planePoint: Vec3?)
+
+/** Orbit camera, hoistable so screens can set Top / Front / Right presets. */
+class Camera(yaw: Float = -35f, pitch: Float = 25f) {
+    var yaw by mutableFloatStateOf(yaw)
+    var pitch by mutableFloatStateOf(pitch)
+    var zoom by mutableFloatStateOf(1f)
+
+    fun set(y: Float, p: Float) { yaw = y; pitch = p; zoom = 1f }
+    fun iso() = set(-35f, 25f)
+    fun top() = set(0f, 90f)
+    fun front() = set(0f, 0f)
+    fun right() = set(90f, 0f)
+}
+
+/** Grid extents on the work plane: model bounds plus a margin, at least 6 m × 6 m. */
+fun gridCorners(model: FrameModel, wp: WorkPlane): Pair<Vec3, Vec3> {
+    val ns = model.nodes
+    fun range(sel: (Node) -> Double): Pair<Double, Double> {
+        if (ns.isEmpty()) return 0.0 to 6.0
+        val lo = ns.minOf(sel) - 2 * wp.snap
+        val hi = ns.maxOf(sel) + 2 * wp.snap
+        val c = (lo + hi) / 2
+        val half = max((hi - lo) / 2, 3.0)
+        return ModelEditorSnap.floor(c - half, wp.snap) to ModelEditorSnap.ceil(c + half, wp.snap)
+    }
+    val (x0, x1) = range { it.x }; val (y0, y1) = range { it.y }; val (z0, z1) = range { it.z }
+    return when (wp.plane) {
+        Plane.XY -> Vec3(x0, y0, wp.offset) to Vec3(x1, y1, wp.offset)
+        Plane.XZ -> Vec3(x0, wp.offset, minOf(z0, 0.0)) to Vec3(x1, wp.offset, z1)
+        Plane.YZ -> Vec3(wp.offset, y0, minOf(z0, 0.0)) to Vec3(wp.offset, y1, z1)
+    }
+}
+
+private object ModelEditorSnap {
+    fun floor(v: Double, s: Double) = if (s > 0) kotlin.math.floor(v / s) * s else v
+    fun ceil(v: Double, s: Double) = if (s > 0) kotlin.math.ceil(v / s) * s else v
 }
 
 /** Blue → cyan → green → yellow → red, as RFEM's deformation colour scale. */
@@ -123,12 +200,19 @@ fun FrameView3D(
     animate: Boolean = true,
     selectedNode: Int? = null,
     onNodeTap: ((Int?) -> Unit)? = null,
+    camera: Camera = remember { Camera() },
+    workPlane: WorkPlane? = null,
+    selectedMember: Int? = null,
+    pendingNode: Int? = null,
+    buckling: BucklingResult? = null,
+    onTap: ((TapInfo) -> Unit)? = null,
 ) {
-    var yaw by remember { mutableFloatStateOf(-35f) }
-    var pitch by remember { mutableFloatStateOf(25f) }
-    var zoom by remember { mutableFloatStateOf(1f) }
     var canvasSize by remember { mutableStateOf(Size(1f, 1f)) }
     val tapCallback by rememberUpdatedState(onNodeTap)
+    val tapInfoCallback by rememberUpdatedState(onTap)
+    val wpState by rememberUpdatedState(workPlane)
+    val modelState by rememberUpdatedState(model)
+    fun extras(m: FrameModel): List<Vec3> = workPlane?.let { wp -> gridCorners(m, wp).toList() } ?: emptyList()
 
     val grow = remember { Animatable(1f) }
     LaunchedEffect(results) {
@@ -139,7 +223,7 @@ fun FrameView3D(
         animationSpec = infiniteRepeatable(tween(1300, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "phase",
     )
-    val phase = grow.value * (if (animate && view == ResultView.DEFORMED) osc else 1f)
+    val phase = grow.value * (if (animate && (view == ResultView.DEFORMED || view == ResultView.BUCKLING)) osc else 1f)
 
     val ink = Color(0xFF1B2A41)
     val pos = Color(0xFFC62828)
@@ -150,46 +234,87 @@ fun FrameView3D(
         modifier
             .background(Color.White)
             .onSizeChanged { canvasSize = Size(it.width.toFloat(), it.height.toFloat()) }
-            .pointerInput(Unit) {
+            .pointerInput(camera) {
                 detectTransformGestures { _, pan, z, _ ->
-                    yaw += pan.x * 0.4f
-                    pitch = (pitch + pan.y * 0.4f).coerceIn(-89f, 89f)
-                    zoom = (zoom * z).coerceIn(0.3f, 8f)
+                    camera.yaw += pan.x * 0.4f
+                    camera.pitch = (camera.pitch + pan.y * 0.4f).coerceIn(-90f, 90f)
+                    camera.zoom = (camera.zoom * z).coerceIn(0.3f, 8f)
                 }
             }
-            .pointerInput(model) {
+            .pointerInput(camera) {
                 detectTapGestures { tap ->
-                    val cb = tapCallback ?: return@detectTapGestures
-                    val pj = Projector(model, yaw, pitch, zoom, canvasSize.width, canvasSize.height)
-                    val hit = model.nodes.minByOrNull { (pj.screen(it.pos) - tap).getDistance() }
-                    cb(if (hit != null && (pj.screen(hit.pos) - tap).getDistance() < 60f) hit.id else null)
+                    val m = modelState
+                    val wp = wpState
+                    val pj = Projector(m, camera.yaw, camera.pitch, camera.zoom, canvasSize.width, canvasSize.height,
+                        wp?.let { gridCorners(m, it).toList() } ?: emptyList())
+                    val hit = m.nodes.minByOrNull { (pj.screen(it.pos) - tap).getDistance() }
+                    val nodeHit = if (hit != null && (pj.screen(hit.pos) - tap).getDistance() < 48f) hit.id else null
+                    tapCallback?.invoke(nodeHit)
+                    val info = tapInfoCallback ?: return@detectTapGestures
+                    val memberHit = if (nodeHit != null) null else m.members.map { mem ->
+                        mem.id to segmentDistance(tap, pj.screen(m.node(mem.i).pos), pj.screen(m.node(mem.j).pos))
+                    }.filter { it.second < 30f }.minByOrNull { it.second }?.first
+                    val pp = wp?.let { w ->
+                        pj.onPlane(tap, w.plane, w.offset)?.let { p ->
+                            Vec3(snap(p.x, w.snap), snap(p.y, w.snap), snap(p.z, w.snap))
+                        }
+                    }
+                    info(TapInfo(nodeHit, memberHit, pp))
                 }
             },
     ) {
         Canvas(Modifier.fillMaxSize()) {
-            val pj = Projector(model, yaw, pitch, zoom, size.width, size.height)
+            val pj = Projector(model, camera.yaw, camera.pitch, camera.zoom, size.width, size.height, extras(model))
             val modelSize = pj.modelSize
+            workPlane?.takeIf { it.visible }?.let { grid(pj, model, it) }
             axesTriad(pj)
 
             val faded = view != ResultView.MODEL
             for (m in model.members) {
+                val sel = m.id == selectedMember
                 drawLine(
-                    if (faded) ink.copy(alpha = 0.25f) else ink,
-                    pj.screen(model.node(m.i).pos), pj.screen(model.node(m.j).pos), if (faded) 2f else 4f,
+                    if (sel) Color(0xFFFFA000) else if (faded) ink.copy(alpha = 0.25f) else ink,
+                    pj.screen(model.node(m.i).pos), pj.screen(model.node(m.j).pos), if (sel) 6f else if (faded) 2f else 4f,
                 )
+                if (m.hingeI || m.hingeJ) {
+                    val a = model.node(m.i).pos; val b = model.node(m.j).pos
+                    if (m.hingeI) drawCircle(Color.White, 6f, pj.screen(a + (b - a) * 0.06), style = androidx.compose.ui.graphics.drawscope.Fill)
+                    if (m.hingeI) drawCircle(ink, 6f, pj.screen(a + (b - a) * 0.06), style = Stroke(2f))
+                    if (m.hingeJ) drawCircle(Color.White, 6f, pj.screen(a + (b - a) * 0.94), style = androidx.compose.ui.graphics.drawscope.Fill)
+                    if (m.hingeJ) drawCircle(ink, 6f, pj.screen(a + (b - a) * 0.94), style = Stroke(2f))
+                }
             }
             supports(pj, model)
             for (n in model.nodes) {
                 val p = pj.screen(n.pos)
-                if (n.id == selectedNode) drawCircle(Color(0xFFFFA000), 16f, p, style = Stroke(4f))
+                if (n.id == selectedNode || n.id == pendingNode) drawCircle(Color(0xFFFFA000), 16f, p, style = Stroke(4f))
                 drawCircle(ink, 4.5f, p)
             }
             loads(pj, model, loadColor)
 
+            if (view == ResultView.BUCKLING) {
+                val b = buckling ?: return@Canvas
+                val k = 0.12 * modelSize * phase
+                for ((_, pts) in b.modeShape) {
+                    val poly = pts.map { (p, d) -> pj.screen(p + d * k) }
+                    for (a in 1 until poly.size) {
+                        val t = ((pts[a].second.length + pts[a - 1].second.length) / 2).toFloat()
+                        drawLine(heat(t), poly[a - 1], poly[a], 5f)
+                    }
+                }
+                drawIntoCanvas {
+                    it.nativeCanvas.drawText(
+                        "λcr = ${"%.3f".format(b.lambda)}  (${b.combination})", 16f, 36f,
+                        Paint().apply { textSize = 30f; isAntiAlias = true; color = android.graphics.Color.BLACK },
+                    )
+                }
+                return@Canvas
+            }
+
             if (results == null) return@Canvas
 
             when (view) {
-                ResultView.MODEL -> {}
+                ResultView.MODEL, ResultView.BUCKLING -> {}
                 ResultView.DEFORMED -> {
                     val maxD = max(results.maxDisplacement().second, results.maxMemberDeflection())
                     val k = if (deformScale > 0) deformScale else if (maxD > 1e-12) 0.08 * modelSize / maxD else 1.0
@@ -235,6 +360,35 @@ fun FrameView3D(
                 }
             }
         }
+    }
+}
+
+private fun snap(v: Double, s: Double) = if (s > 0) Math.round(v / s) * s else v
+
+private fun segmentDistance(p: Offset, a: Offset, b: Offset): Float {
+    val ab = b - a
+    val l2 = ab.x * ab.x + ab.y * ab.y
+    if (l2 < 1e-6f) return (p - a).getDistance()
+    val t = (((p - a).x * ab.x + (p - a).y * ab.y) / l2).coerceIn(0f, 1f)
+    return (p - (a + ab * t)).getDistance()
+}
+
+private fun DrawScope.grid(pj: Projector, model: FrameModel, wp: WorkPlane) {
+    val (lo, hi) = gridCorners(model, wp)
+    val c = Color(0xFFB0BEC5)
+    val s = wp.snap.coerceAtLeast(0.1)
+    fun lines(u0: Double, u1: Double, v0: Double, v1: Double, pt: (Double, Double) -> Vec3) {
+        var u = u0
+        var guard = 0
+        while (u <= u1 + 1e-9 && guard++ < 200) { drawLine(c, pj.screen(pt(u, v0)), pj.screen(pt(u, v1)), 1f); u += s }
+        var v = v0
+        guard = 0
+        while (v <= v1 + 1e-9 && guard++ < 200) { drawLine(c, pj.screen(pt(u0, v)), pj.screen(pt(u1, v)), 1f); v += s }
+    }
+    when (wp.plane) {
+        Plane.XY -> lines(lo.x, hi.x, lo.y, hi.y) { u, v -> Vec3(u, v, wp.offset) }
+        Plane.XZ -> lines(lo.x, hi.x, lo.z, hi.z) { u, v -> Vec3(u, wp.offset, v) }
+        Plane.YZ -> lines(lo.y, hi.y, lo.z, hi.z) { u, v -> Vec3(wp.offset, u, v) }
     }
 }
 

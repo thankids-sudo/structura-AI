@@ -80,6 +80,16 @@ Every check carries its clause:
 - **Export:** CSV of all results (opens in Excel). "Design this beam" sends the critical beam's My/Vz (×1.5) to the IS 456 beam designer.
 - **Verified against closed-form results** in `FrameSolverTest`: cantilever PL³/3EI, simply supported 5wL⁴/384EI and wL²/8, fixed–fixed wL²/12 and wL²/24, two-span support moment wL²/8 and central reaction 1.25wL, PL/4 and PL³/48EI, Pab/L, hinged member = simply supported, combination superposition, portal frame symmetry and equilibrium.
 
+## 3D Studio (model editor)
+
+Same workflow as the Structura AI web version:
+- **Tools:** Select, Node, Member (chain drawing), ½ Split, Fix, Pin, Load (Fx/Fy/Fz), Member load (q along global Z), Delete.
+- **Work plane** XY / XZ / YZ with offset and snap. Tapping the grid places snapped nodes; coincident nodes merge automatically.
+- **Views:** 3D isometric, Top XY, Front XZ, Right YZ. Drag to orbit, pinch to zoom.
+- **Undo / Redo** (80 steps), **Model check**, **Save / Open project** (`*.structura.json`, plain JSON), **HTML report** (open in a browser and use Print ▸ Save as PDF).
+- **Edit a selection:** node coordinates and support type; member section b × D and hinges at i / j; clear loads.
+- **Analysis:** IS 456 Table 18 combinations, ULS envelope, animated deformed shape, N/V/M diagrams, and **global buckling λcr** with the animated mode shape. Buckling uses a consistent geometric stiffness, 4 elements per member and inverse iteration, and is verified against Euler's π²EI/4L² cantilever.
+
 ## Detail drawing (UCS-based, DXF)
 
 - Every view has its own **named UCS**: `ELEVATION` (origin at the soffit, outer face of the left support), `SECTION_A-A` (origin at the bottom-left corner of the section), and `NOTES`.

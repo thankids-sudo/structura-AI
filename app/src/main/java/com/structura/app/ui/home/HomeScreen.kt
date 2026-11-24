@@ -64,7 +64,8 @@ val MODULES = listOf(
     StructuraModule(
         "FEM Analysis + AI", "3D frame FEM · N / V / M diagrams · RFEM-style", Icons.Filled.AccountTree, 1,
         listOf(
-            ModuleTool("Continuous beam / 2D frame / 3D frame", Routes.FEM),
+            ModuleTool("3D Studio — model editor, analysis, buckling, report", Routes.STUDIO),
+            ModuleTool("Frame wizard: beam / portal / space frame", Routes.FEM),
             ModuleTool("Load combinations (IS 875 / IS 1893)", null),
             ModuleTool("AI result check", null),
         ),

@@ -139,7 +139,7 @@ object FrameSolver {
         (if (m.hingeI) intArrayOf(4, 5) else intArrayOf()) + (if (m.hingeJ) intArrayOf(10, 11) else intArrayOf())
 
     /** Static condensation of released DOFs (exact Gaussian elimination of those rows). */
-    private fun condense(k: Array<DoubleArray>, f: DoubleArray, released: IntArray) {
+    internal fun condense(k: Array<DoubleArray>, f: DoubleArray, released: IntArray) {
         for (r in released) {
             val krr = k[r][r]
             if (krr == 0.0) continue
@@ -155,7 +155,7 @@ object FrameSolver {
         }
     }
 
-    private fun rotation(ax: MemberAxes) = arrayOf(
+    internal fun rotation(ax: MemberAxes) = arrayOf(
         doubleArrayOf(ax.x.x, ax.x.y, ax.x.z),
         doubleArrayOf(ax.y.x, ax.y.y, ax.y.z),
         doubleArrayOf(ax.z.x, ax.z.y, ax.z.z),
@@ -181,7 +181,7 @@ object FrameSolver {
         return out
     }
 
-    private fun globalStiffness(kl: Array<DoubleArray>, r: Array<DoubleArray>): Array<DoubleArray> {
+    internal fun globalStiffness(kl: Array<DoubleArray>, r: Array<DoubleArray>): Array<DoubleArray> {
         val t = Array(12) { DoubleArray(12) }
         for (blk in 0 until 4) for (a in 0 until 3) for (b in 0 until 3) t[blk * 3 + a][blk * 3 + b] = r[a][b]
         val kt = Array(12) { DoubleArray(12) }
