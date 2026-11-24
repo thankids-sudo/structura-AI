@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -26,11 +27,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -53,8 +57,10 @@ import com.structura.core.fem.FrameResults
 import com.structura.core.fem.FrameSolver
 import com.structura.core.fem.Generators
 import com.structura.core.fem.Material
+import com.structura.core.fem.NodalLoad
 import com.structura.core.fem.Section
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -77,8 +83,15 @@ fun FemScreen(onBack: () -> Unit, onDesignBeam: () -> Unit) {
     var lateral by rememberSaveable { mutableStateOf("10") }
     var selfWeight by rememberSaveable { mutableStateOf(true) }
 
+    var baseModel by remember { mutableStateOf<FrameModel?>(null) }
     var model by remember { mutableStateOf<FrameModel?>(null) }
     var results by remember { mutableStateOf<FrameResults?>(null) }
+    // Live loads applied by tapping a node: node id → (Fx, Fy, Fz) kN
+    var liveLoads by remember { mutableStateOf(mapOf<Int, Triple<Float, Float, Float>>()) }
+    var selectedNode by remember { mutableStateOf<Int?>(null) }
+    var autoScale by remember { mutableStateOf(0.0) }
+    var scaleMul by remember { mutableFloatStateOf(1f) }
+    var animate by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var view by remember { mutableStateOf(ResultView.MODEL) }
@@ -98,19 +111,43 @@ fun FemScreen(onBack: () -> Unit, onDesignBeam: () -> Unit) {
         }
     }
 
+    fun withLive(base: FrameModel, live: Map<Int, Triple<Float, Float, Float>>): FrameModel =
+        if (live.isEmpty()) base else base.copy(
+            nodalLoads = base.nodalLoads + live.filter { (_, f) -> f.first != 0f || f.second != 0f || f.third != 0f }
+                .map { (n, f) -> NodalLoad(n, listOf(f.first.toDouble(), f.second.toDouble(), f.third.toDouble(), 0.0, 0.0, 0.0)) },
+        )
+
     fun run() {
         error = null
         val m = try { build() } catch (e: Exception) { error = "Check inputs: ${e.message ?: "numbers only"}"; return }
-        model = m; results = null; busy = true
+        baseModel = m; model = m; results = null; busy = true
+        liveLoads = emptyMap(); selectedNode = null
         scope.launch {
             try {
-                results = withContext(Dispatchers.Default) { FrameSolver.analyse(m) }
-                if (view == ResultView.MODEL) view = ResultView.MY
+                val r = withContext(Dispatchers.Default) { FrameSolver.analyse(m) }
+                val maxD = maxOf(r.maxDisplacement().second, r.maxMemberDeflection())
+                autoScale = if (maxD > 1e-12) 0.08 * modelSpan(m) / maxD else 1.0
+                results = r
+                view = ResultView.DEFORMED
             } catch (e: Exception) {
                 error = e.message
             } finally {
                 busy = false
             }
+        }
+    }
+
+    // Re-solve as soon as a live load changes (debounced) — the view animates to the new shape.
+    LaunchedEffect(liveLoads) {
+        val base = baseModel ?: return@LaunchedEffect
+        if (results == null && liveLoads.isEmpty()) return@LaunchedEffect
+        delay(120)
+        val m = withLive(base, liveLoads)
+        try {
+            val r = withContext(Dispatchers.Default) { FrameSolver.analyse(m) }
+            model = m; results = r; error = null
+        } catch (e: Exception) {
+            error = e.message
         }
     }
 
@@ -174,8 +211,53 @@ fun FemScreen(onBack: () -> Unit, onDesignBeam: () -> Unit) {
                         )
                     }
                 }
-                Card(Modifier.fillMaxWidth().height(380.dp)) { FrameView3D(m, results, view, Modifier.fillMaxWidth().height(380.dp)) }
-                Text("Drag to rotate · pinch to zoom · red = positive, blue = negative", style = MaterialTheme.typography.labelSmall)
+                Card(Modifier.fillMaxWidth().height(400.dp)) {
+                    FrameView3D(
+                        m, results, view, Modifier.fillMaxWidth().height(400.dp),
+                        deformScale = autoScale * scaleMul,
+                        animate = animate,
+                        selectedNode = selectedNode,
+                        onNodeTap = { selectedNode = it },
+                    )
+                }
+                Text(
+                    "Drag to rotate · pinch to zoom · tap a node to apply a load · red = +, blue = −",
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                if (view == ResultView.DEFORMED && results != null) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(checked = animate, onCheckedChange = { animate = it })
+                    Text("  Animate", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.width(12.dp))
+                    Text("Scale ×${"%.1f".format(scaleMul)}", style = MaterialTheme.typography.bodySmall)
+                    Slider(value = scaleMul, onValueChange = { scaleMul = it }, valueRange = 0.25f..5f, modifier = Modifier.weight(1f))
+                }
+                val sel = selectedNode
+                if (sel != null && results != null) {
+                    val node = m.node(sel)
+                    val cur = liveLoads[sel] ?: Triple(0f, 0f, 0f)
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                "Node $sel  (${"%.2f".format(node.x)}, ${"%.2f".format(node.y)}, ${"%.2f".format(node.z)}) — live load",
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            LoadSlider("Fx", cur.first) { liveLoads = liveLoads + (sel to cur.copy(first = it)) }
+                            LoadSlider("Fy", cur.second) { liveLoads = liveLoads + (sel to cur.copy(second = it)) }
+                            LoadSlider("Fz", cur.third) { liveLoads = liveLoads + (sel to cur.copy(third = it)) }
+                            results?.nodeDisplacements?.get(sel)?.let { d ->
+                                Text(
+                                    "Displacement: ux ${"%.2f".format(d[0] * 1000)}  uy ${"%.2f".format(d[1] * 1000)}  uz ${"%.2f".format(d[2] * 1000)} mm",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = { liveLoads = liveLoads - sel }) { Text("Remove") }
+                                OutlinedButton(onClick = { liveLoads = emptyMap() }) { Text("Clear all") }
+                                OutlinedButton(onClick = { selectedNode = null }) { Text("Done") }
+                            }
+                        }
+                    }
+                }
             }
 
             results?.let { r -> ResultsSummary(r, onDesignBeam) }
@@ -237,6 +319,24 @@ private fun ResultsSummary(r: FrameResults, onDesignBeam: () -> Unit) {
             onDesignBeam()
         }, modifier = Modifier.fillMaxWidth()) { Text("Design this beam to IS 456 (×1.5 load factor)") }
     }
+}
+
+@Composable
+private fun LoadSlider(label: String, value: Float, onChange: (Float) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("$label ${"%+.0f".format(value)} kN", style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(96.dp))
+        Slider(
+            value = value,
+            onValueChange = { onChange(Math.round(it / 5f) * 5f) },   // 5 kN steps
+            valueRange = -200f..200f,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+private fun modelSpan(m: FrameModel): Double {
+    val xs = m.nodes.map { it.x }; val ys = m.nodes.map { it.y }; val zs = m.nodes.map { it.z }
+    return maxOf(xs.max() - xs.min(), ys.max() - ys.min(), zs.max() - zs.min()).coerceAtLeast(1.0)
 }
 
 @Composable
