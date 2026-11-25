@@ -54,6 +54,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.structura.app.DesignSession
 import com.structura.app.shareTextFile
+import com.structura.app.shareBytesFile
+import com.structura.app.SorStore
+import com.structura.core.plan.BoqExport
+import com.structura.core.plan.PlanImageReader
 import com.structura.core.plan.BuildingInput
 import com.structura.core.plan.DxfPlan
 import com.structura.core.plan.DxfReader
@@ -84,6 +88,10 @@ fun PlanScreen(onBack: () -> Unit, onStudio: () -> Unit) {
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var fileName by remember { mutableStateOf("") }
+    var detection by remember { mutableStateOf<PlanImageReader.Detection?>(null) }
+    var span12 by remember { mutableStateOf("4.0") }
+    var showSor by remember { mutableStateOf(false) }
+    var sor by remember { mutableStateOf(SorStore.load(context)) }
 
     var storeys by remember { mutableStateOf("3") }
     var height by remember { mutableStateOf("3.2") }
@@ -113,6 +121,25 @@ fun PlanScreen(onBack: () -> Unit, onStudio: () -> Unit) {
         }
     }
 
+    fun loadImage(uri: android.net.Uri, isPdf: Boolean) {
+        busy = true; message = null; design = null; removed = emptySet(); plan = null; base = null
+        scope.launch {
+            try {
+                val det = withContext(Dispatchers.Default) {
+                    val bmp = if (isPdf) PlanBitmaps.pdfPage(context, uri) else PlanBitmaps.image(context, uri)
+                    val (g, w, h) = PlanBitmaps.gray(bmp)
+                    bmp.recycle()
+                    PlanImageReader.detect(g, w, h)
+                }
+                detection = det; fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "plan"
+                message = det.notes.joinToString(" · ") + " — enter the span between grid lines 1 and 2 and tap Apply scale"
+            } catch (e: Exception) { message = "Could not read the image: ${e.message}" } finally { busy = false }
+        }
+    }
+
+    val pdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) loadImage(uri, true) }
+    val imageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) loadImage(uri, false) }
+
     val openLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) runCatching {
             val text = context.contentResolver.openInputStream(uri)!!.bufferedReader(Charsets.ISO_8859_1).use { it.readText() }
@@ -139,7 +166,9 @@ fun PlanScreen(onBack: () -> Unit, onStudio: () -> Unit) {
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 AssistChip(onClick = { openLauncher.launch(arrayOf("image/vnd.dxf", "application/dxf", "application/octet-stream", "text/plain", "*/*")) },
                     label = { Text("↑ Open DXF plan") })
-                AssistChip(onClick = { load(SamplePlan.dxf(), "Sample 3-bay plan") }, label = { Text("Try sample plan") })
+                AssistChip(onClick = { pdfLauncher.launch(arrayOf("application/pdf")) }, label = { Text("↑ PDF plan") })
+                AssistChip(onClick = { imageLauncher.launch(arrayOf("image/*")) }, label = { Text("↑ Photo / scan") })
+                AssistChip(onClick = { detection = null; load(SamplePlan.dxf(), "Sample 3-bay plan") }, label = { Text("Try sample plan") })
                 if (removed.isNotEmpty()) AssistChip(onClick = { removed = emptySet(); design = null }, label = { Text("Restore ${removed.size} column(s)") })
             }
             Text(
@@ -147,6 +176,26 @@ fun PlanScreen(onBack: () -> Unit, onStudio: () -> Unit) {
                     "Tap a column to remove it (false detection or floating column); beams are re-proposed along the grid lines.",
                 style = MaterialTheme.typography.labelSmall,
             )
+            detection?.let { det ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Image plan: ${det.columns.size} column blobs on ${det.gridPixelsX().size} × ${det.gridPixelsY().size} lines (${det.width} × ${det.height} px)",
+                            fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            F("Span grid 1–2 (m)", span12, Modifier.weight(1f)) { span12 = it }
+                            Button(onClick = {
+                                runCatching {
+                                    val p = PlanImageReader.toPlan(det, n(span12, 4.0))
+                                    plan = p; base = PlanRecognizer.recognise(p, maxSpan = n(maxSpan, 10.0)); removed = emptySet(); design = null
+                                    message = "Scale ${p.unitName}. Check the column sizes against the drawing."
+                                }.onFailure { message = it.message }
+                            }) { Text("Apply scale") }
+                        }
+                        Text("Grid 1 is the leftmost column line. Photos: shoot square-on in good light; PDF: first page is read.",
+                            style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
             Card(Modifier.fillMaxWidth().height(380.dp)) {
                 PlanCanvas(plan, layout, onTapColumn = { id -> removed = if (id in removed) removed - id else removed + id; design = null })
             }
@@ -219,9 +268,21 @@ fun PlanScreen(onBack: () -> Unit, onStudio: () -> Unit) {
                             style = MaterialTheme.typography.labelSmall)
                     }
                 }
-                OutlinedButton(onClick = {
-                    shareTextFile(context, "${fileName.substringBeforeLast('.').ifBlank { "plan" }}_takedown_BOQ.csv", "text/csv", d.csv(), "Structura AI — take-down and quantities")
-                }, modifier = Modifier.fillMaxWidth()) { Text("↓ Take-down + quantities (CSV)") }
+                val proj = fileName.substringBeforeLast('.').ifBlank { "plan" }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(onClick = {
+                        shareBytesFile(context, "${proj}_BOQ.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            BoqExport.xlsx(d, sor, proj), "Structura AI — measurement & abstract")
+                    }, modifier = Modifier.weight(1f)) { Text("↓ BOQ Excel") }
+                    OutlinedButton(onClick = {
+                        shareTextFile(context, "${proj}_estimatex.json", "application/json", BoqExport.json(d, sor, proj), "Structura AI → EstimateX / JAUEstimate")
+                    }, modifier = Modifier.weight(1f)) { Text("↓ EstimateX JSON") }
+                    OutlinedButton(onClick = {
+                        shareTextFile(context, "${proj}_takedown.csv", "text/csv", d.csv(), "Structura AI — take-down and quantities")
+                    }, modifier = Modifier.weight(1f)) { Text("↓ CSV") }
+                }
+                OutlinedButton(onClick = { showSor = !showSor }, modifier = Modifier.fillMaxWidth()) { Text(if (showSor) "Hide SOR codes & rates" else "SOR codes & rates (your SOR)") }
+                if (showSor) SorEditor(sor) { sor = it; SorStore.save(context, it) }
             }
         }
     }
@@ -309,6 +370,28 @@ private fun PlanCanvas(plan: DxfPlan?, layout: PlanLayout?, onTapColumn: (Int) -
             val w = max((c.b * sc).toFloat(), 10f); val h = max((c.d * sc).toFloat(), 10f)
             if (c.circular) drawCircle(ink, w / 2, Offset(sx(c.x), sy(c.y)))
             else drawRect(ink, Offset(sx(c.x) - w / 2, sy(c.y) - h / 2), Size(w, h))
+        }
+    }
+}
+
+/** Editable SOR item code / rate per BOQ item (e.g. Gujarat R&B SOR); saved on the device. */
+@Composable
+private fun SorEditor(sor: Map<BoqExport.Key, BoqExport.Sor>, onChange: (Map<BoqExport.Key, BoqExport.Sor>) -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Enter the item code and rate from your current SOR; they are saved and used in the Abstract and JSON.",
+                style = MaterialTheme.typography.labelSmall)
+            BoqExport.Key.entries.forEach { k ->
+                val s = sor[k] ?: BoqExport.Sor()
+                Text("${k.title} (${k.unit})", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedTextField(s.code, { onChange(sor + (k to s.copy(code = it))) }, label = { Text("SOR item no.") }, singleLine = true, modifier = Modifier.weight(1f))
+                    OutlinedTextField(if (s.rate == 0.0) "" else String.format(Locale.US, "%.2f", s.rate),
+                        { v -> onChange(sor + (k to s.copy(rate = v.replace(',', '.').toDoubleOrNull() ?: 0.0))) },
+                        label = { Text("Rate ₹/${k.unit}") }, singleLine = true, modifier = Modifier.weight(1f),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                }
+            }
         }
     }
 }

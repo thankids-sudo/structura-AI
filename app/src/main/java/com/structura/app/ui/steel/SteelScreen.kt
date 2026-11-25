@@ -42,7 +42,7 @@ import java.util.Locale
 
 enum class SteelTask(val label: String) { BEAM("Beam"), COLUMN("Column"), TENSION("Tension"), BEAM_COLUMN("Beam-column"), BOLTS("Bolts"), WELDS("Fillet weld") }
 
-private val FAMILIES = listOf("ISMB", "ISHB", "ISMC", "SHS", "RHS", "CHS", "Custom I")
+private val FAMILIES: List<String> get() = com.structura.core.steel.SteelLibrary.prefixes() + "Custom I"
 
 private fun n(s: String, d: Double = 0.0) = s.replace(',', '.').toDoubleOrNull() ?: d
 
@@ -85,10 +85,11 @@ fun SteelScreen(onBack: () -> Unit) {
     var shop by rememberSaveable { mutableStateOf(true) }
 
     var out by remember { mutableStateOf<Pair<String, SteelResult>?>(null) }
+    var libVersion by remember { mutableStateOf(0) }
     var err by remember { mutableStateOf<String?>(null) }
 
     fun section(): SteelSection = if (family == "Custom I") SteelSection.iSection("I ${ch}×${cbf}×${ctf}×${ctw}", n(ch, 400.0), n(cbf, 200.0), n(ctf, 16.0), n(ctw, 10.0), welded)
-    else SteelSection.library.first { it.name == secName }
+    else com.structura.core.steel.SteelLibrary.all.first { it.name == secName }
 
     Scaffold(topBar = {
         TopAppBar(title = { Text("Steel design — IS 800:2007") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } })
@@ -104,7 +105,7 @@ fun SteelScreen(onBack: () -> Unit) {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     FAMILIES.forEach { f -> FilterChip(f == family, {
                         family = f
-                        SteelSection.library.firstOrNull { it.name.startsWith(f) }?.let { secName = it.name }
+                        com.structura.core.steel.SteelLibrary.all.firstOrNull { it.name.startsWith("$f ") || it.name == f }?.let { secName = it.name }
                     }, { Text(f) }) }
                 }
                 if (family == "Custom I") {
@@ -114,13 +115,17 @@ fun SteelScreen(onBack: () -> Unit) {
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) { Switch(welded, { welded = it }); Text("  Welded plate girder (buckling class b/c, αLT 0.49)") }
                 } else Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    SteelSection.library.filter { it.name.startsWith(family) }.forEach { s -> FilterChip(s.name == secName, { secName = s.name }, { Text(s.name) }) }
+                    com.structura.core.steel.SteelLibrary.all.filter { it.name.substringBefore(' ') == family }.forEach { s -> FilterChip(s.name == secName, { secName = s.name }, { Text(s.name) }) }
                 }
                 runCatching { section() }.getOrNull()?.let { s ->
                     Text(String.format(Locale.US, "%s: A %.1f cm², Izz %.0f cm⁴, Iyy %.1f cm⁴, Zpz %.1f cm³, rz %.1f mm, ry %.1f mm, %.1f kg/m",
                         s.name, s.area / 100, s.izz / 1e4, s.iyy / 1e4, s.zpz / 1e3, s.rz, s.ry, s.massPerM), style = MaterialTheme.typography.bodySmall)
                 }
-                Text("Properties from nominal IS 808 dimensions without root fillets (1–4 % conservative). Verify against IS 808 / SP 6.", style = MaterialTheme.typography.labelSmall)
+                Text(if (com.structura.core.steel.SteelLibrary.imported.any { it.name == secName }) "Imported section — tabulated properties where given in the CSV."
+                    else "Properties from nominal IS 808 dimensions without root fillets (1–4 % conservative). Import the full SP 6(1) table below for tabulated values.",
+                    style = MaterialTheme.typography.labelSmall)
+                SectionTableRow { libVersion++ }
+                if (libVersion < 0) Text("")   // recompose families after an import
             }
             when (task) {
                 SteelTask.BEAM -> {
@@ -201,4 +206,28 @@ fun SteelScreen(onBack: () -> Unit) {
             Spacer(Modifier.height(24.dp))
         }
     }
+}
+
+/** Import the full IS 808 / SP 6(1) table as CSV, share a template, or clear the imported sections. */
+@Composable
+private fun SectionTableRow(onChanged: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var note by remember { mutableStateOf<String?>(null) }
+    val open = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) runCatching {
+            val text = context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() }
+            val r = com.structura.app.SectionStore.save(context, text)
+            note = r.notes.take(6).joinToString("\n"); onChanged()
+        }.onFailure { note = "Import failed: ${it.message}" }
+    }
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        androidx.compose.material3.AssistChip(onClick = { open.launch(arrayOf("text/*", "text/csv", "*/*")) }, label = { Text("↑ Import section table (CSV)") })
+        androidx.compose.material3.AssistChip(onClick = {
+            com.structura.app.shareTextFile(context, "section_table_template.csv", "text/csv", com.structura.core.steel.SteelLibrary.template(), "Structura AI section table template")
+        }, label = { Text("Template") })
+        if (com.structura.core.steel.SteelLibrary.imported.isNotEmpty()) androidx.compose.material3.AssistChip(onClick = {
+            com.structura.app.SectionStore.clear(context); note = "Imported sections removed"; onChanged()
+        }, label = { Text("Clear ${com.structura.core.steel.SteelLibrary.imported.size} imported") })
+    }
+    note?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
 }

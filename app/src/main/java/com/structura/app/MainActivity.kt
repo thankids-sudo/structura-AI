@@ -27,12 +27,14 @@ object Routes {
     const val STUDIO = "fem/studio"
     const val STANDARDS = "standards"
     const val PLAN = "plan"
+    const val LOADS = "loads"
 }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        SectionStore.load(this)
         setContent {
             StructuraTheme {
                 val nav = rememberNavController()
@@ -60,6 +62,7 @@ class MainActivity : ComponentActivity() {
                             onStudio = { nav.navigate(Routes.STUDIO) { popUpTo(Routes.HOME) } },
                         )
                     }
+                    composable(Routes.LOADS) { com.structura.app.ui.loads.LoadsScreen(onBack = { nav.popBackStack() }) }
                     composable(Routes.PLAN) {
                         com.structura.app.ui.plan.PlanScreen(onBack = { nav.popBackStack() }, onStudio = { nav.navigate(Routes.STUDIO) })
                     }

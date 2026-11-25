@@ -162,6 +162,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
     var eqBuilding by remember { mutableStateOf(Seismic.BuildingType.RC_MRF) }
     var seismicEnv by remember { mutableStateOf(false) }
     var steel by remember { mutableStateOf<List<SteelModelCheck.MemberCheck>>(emptyList()) }
+    var aiReview by remember { mutableStateOf<com.structura.core.fem.ResultCheck.Review?>(null) }
     var showUtil by remember { mutableStateOf(true) }
     var steelK by remember { mutableStateOf(1.0) }
     var steelLlt by remember { mutableStateOf(1.0) }
@@ -171,7 +172,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
     fun commit(m: FrameModel, msg: String? = null) {
         history = (history.take(pos + 1) + m).takeLast(80)
         pos = history.size - 1
-        results = null; buckling = null; env = emptyList(); modal = null; seismic = null; seismicEnv = false; steel = emptyList()
+        results = null; buckling = null; env = emptyList(); modal = null; seismic = null; seismicEnv = false; steel = emptyList(); aiReview = null
         if (view != ResultView.MODEL) view = ResultView.MODEL
         message = msg
     }
@@ -280,6 +281,24 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 t.member != null -> commit(ModelEditor.deleteMember(model, t.member), "M${t.member} deleted")
                 t.panel != null -> commit(ModelEditor.deletePanel(model, t.panel), "P${t.panel} deleted")
             }
+        }
+    }
+
+    fun runAiCheck() {
+        busy = true; message = null
+        scope.launch {
+            try {
+                val lat = LoadCase.WL in model.loadCases
+                val combos = LoadCombination.isLimitState(lat) + LoadCombination.cases(LoadCase.LL in model.loadCases, lat).filter { it.name.contains("service") }
+                aiReview = withContext(Dispatchers.Default) {
+                    val res = if (model.supports.isEmpty()) emptyList() else FrameSolver.analyseAll(model, combos)
+                    com.structura.core.fem.ResultCheck.review(model, res)
+                }
+                message = "AI check: ${aiReview!!.errors} error(s), ${aiReview!!.warnings} warning(s)"
+            } catch (e: Exception) {
+                aiReview = com.structura.core.fem.ResultCheck.review(model, emptyList())
+                message = "Analysis failed (${e.message}) — model checks only"
+            } finally { busy = false }
         }
     }
 
@@ -597,6 +616,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 OutlinedButton(onClick = { runBuckling() }, enabled = !busy && model.members.isNotEmpty(), modifier = Modifier.weight(1f)) { Text("Buckling λcr") }
                 OutlinedButton(onClick = { runModal() }, enabled = !busy && model.members.isNotEmpty(), modifier = Modifier.weight(1f)) { Text("♫ Modal") }
             }
+            AiCheckCard(aiReview, busy, onRun = { runAiCheck() }, onPick = { selMember = it })
             SteelCard(
                 steel, busy, steelK, { steelK = it; steel = emptyList() }, steelLlt, { steelLlt = it; steel = emptyList() },
                 showUtil, { showUtil = it }, selMember, onRun = { runSteel() }, onPick = { selMember = it },

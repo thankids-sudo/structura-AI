@@ -70,7 +70,7 @@ object PlanImageReader {
         }
         if (cand.isEmpty()) return Detection(w, h, emptyList(), blobs.size, notes + "No solid / hatched columns found — try a cleaner scan or the DXF route")
         val med = cand.map { it.w * it.h }.sorted()[cand.size / 2].toDouble()
-        val cols = cand.filter { it.w * it.h in (0.2 * med)..(5.0 * med) }
+        val cols = cand.filter { (it.w * it.h).toDouble() in (0.2 * med)..(5.0 * med) }
         notes += "${cols.size} column blobs (median ${"%.0f".format(kotlin.math.sqrt(med))} px), ${blobs.size - cols.size} other dark shapes ignored"
         return Detection(w, h, cols, blobs.size - cols.size, notes)
     }

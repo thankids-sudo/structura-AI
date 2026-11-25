@@ -124,7 +124,7 @@ object BoqExport {
         }
         val tr = abs.size + 1
         abs += listOf(Cell.Empty, Cell.Empty, Cell.S("Total", 2), Cell.Empty, Cell.Empty, Cell.Empty, Cell.F("SUM(G3:G${tr - 1})", its.sumOf { it.qty * (sor[it.key]?.rate ?: 0.0) }, 7))
-        abs += emptyList()
+        abs.add(emptyList())
         abs += listOf(Cell.S("Preliminary superstructure quantities from Structura AI; steel by kg/m³ allowance — replace with BBS. Foundations, masonry, finishes not included.", 0))
         // Info
         val inp = d.input

@@ -53,7 +53,8 @@ val MODULES = listOf(
             ModuleTool("Beam detail drawing (UCS · DXF)", Routes.RCC_DRAWING),
             ModuleTool("Slab design (one-way / two-way)", Routes.RCC_SLAB),
             ModuleTool("Column design (biaxial, slender)", Routes.RCC_COLUMN),
-            ModuleTool("Isolated footing design", Routes.RCC_FOOTING),
+            ModuleTool("Isolated footing design (with moments)", Routes.RCC_FOOTING),
+            ModuleTool("Loads — IS 875 Part 1 & 2", Routes.LOADS),
         ),
     ),
     StructuraModule(
@@ -66,16 +67,16 @@ val MODULES = listOf(
             ModuleTool("3D Studio — model editor, analysis, buckling, report", Routes.STUDIO),
             ModuleTool("Frame wizard: beam / portal / space frame", Routes.FEM),
             ModuleTool("Indian Standards · load assumptions", Routes.STANDARDS),
-            ModuleTool("Load combinations (IS 875 / IS 1893)", null),
-            ModuleTool("AI result check", null),
+            ModuleTool("Load combinations (IS 875 / IS 456 Table 18)", Routes.LOADS),
+            ModuleTool("AI result check (in 3D Studio)", Routes.STUDIO),
         ),
     ),
     StructuraModule(
         "Drawing → Structure AI", "Plan → grid → layout → sizes", Icons.Filled.ViewInAr, 4,
         listOf(
-            ModuleTool("Import DXF plan → grid, columns, beams", Routes.PLAN),
+            ModuleTool("Import DXF / PDF / photo plan → grid, columns, beams", Routes.PLAN),
             ModuleTool("Load take-down & preliminary sizes", Routes.PLAN),
-            ModuleTool("Generate 3D model → Studio · quantities CSV", Routes.PLAN),
+            ModuleTool("3D model → Studio · BOQ Excel / EstimateX JSON", Routes.PLAN),
         ),
     ),
 )

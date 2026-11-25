@@ -24,6 +24,7 @@ import com.structura.core.fem.Section
 import com.structura.core.fem.SectionCatalogue
 import com.structura.core.steel.SteelModelCheck
 import com.structura.core.steel.SteelSection
+import com.structura.core.steel.SteelLibrary
 
 enum class ShapeKind(val label: String) { RECT("Rectangle"), CHS("CHS ○"), SHS("SHS □"), RHS("RHS ▭"), STEEL_ROLLED("IS 808 rolled"), CATALOGUE("Tube catalogue") }
 enum class MaterialKind(val label: String) { CONCRETE("Concrete"), STEEL("Steel"), GFRP("GFRP"), CUSTOM("Custom E/G/γ") }
@@ -47,8 +48,8 @@ class SectionSpec {
 
     private fun n(s: String, def: Double) = s.replace(',', '.').toDoubleOrNull() ?: def
 
-    fun rolledEntries() = SteelSection.library.filter {
-        it.name.startsWith(rolledFamily) && (it.family == SteelSection.Family.I || it.family == SteelSection.Family.CHANNEL)
+    fun rolledEntries() = SteelLibrary.all.filter {
+        it.name.substringBefore(' ') == rolledFamily && (it.family == SteelSection.Family.I || it.family == SteelSection.Family.CHANNEL || it.family == SteelSection.Family.WELDED_I)
     }
 
     fun catalogueEntries() = SectionCatalogue.entries.filter { it.family == family }
@@ -59,7 +60,7 @@ class SectionSpec {
         ShapeKind.SHS -> Section.rhs(n(b, 100.0) / 1000, n(b, 100.0) / 1000, n(t, 5.0) / 1000)
         ShapeKind.RHS -> Section.rhs(n(b, 50.0) / 1000, n(d, 100.0) / 1000, n(t, 5.0) / 1000)
         ShapeKind.STEEL_ROLLED -> SteelModelCheck.femSection(
-            SteelSection.library.firstOrNull { it.name == rolledName } ?: rolledEntries().first())
+            SteelLibrary.all.firstOrNull { it.name == rolledName } ?: rolledEntries().first())
         ShapeKind.CATALOGUE -> catalogueEntries().getOrElse(catIndex) { catalogueEntries().first() }.section
     }
 
@@ -121,7 +122,7 @@ fun SectionPicker(spec: SectionSpec) {
             }
             ShapeKind.STEEL_ROLLED -> {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("ISMB", "ISHB", "ISMC").forEach { f ->
+                    SteelLibrary.prefixes { it.family == SteelSection.Family.I || it.family == SteelSection.Family.CHANNEL || it.family == SteelSection.Family.WELDED_I }.forEach { f ->
                         FilterChip(f == spec.rolledFamily, { spec.rolledFamily = f; spec.rolledName = spec.rolledEntries().first().name; spec.material = MaterialKind.STEEL }, { Text(f) })
                     }
                 }
