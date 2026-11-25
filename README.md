@@ -78,6 +78,21 @@ Every check carries its clause:
 - **Isolated footings:** plan size from SBC, moments at the column face, depth iterated for flexure, one-way shear and punching (ks·0.25√fck), central band, minimum steel, development length.
 - **Bar bending schedule** for every member, exported as CSV. Shape-specific cut lengths use IS 2502 bend deductions (90° = 2φ, 135° = 3φ) and unit weight d²/162; every row lists its formula.
 
+## Steel member design (IS 800:2007, limit state)
+- **Sections:** ISMB / ISHB / ISMC (IS 808 nominal dimensions), SHS / RHS (IS 4923), CHS and custom rolled or welded I-sections. Properties are computed without root fillets, so A and I come out 1–4 % below the tables; for example, ISMB 300 Izz is within 3 % of IS 808 (checked in tests).
+- **Classification:** Table 2.
+- **Tension (Cl. 6):** gross yielding and net rupture with holes, plus the L/r ≤ 400 check.
+- **Compression (Cl. 7.1.2):** buckling classes from Table 10 and fcd from the Perry–Robertson formula. Verified against Table 9(b): 118 MPa at KL/r 100, fy 250.
+- **Beams:**
+  - Laterally supported Md ≤ 1.2·Ze·fy/γm0 (Cl. 8.2.1).
+  - Lateral-torsional buckling with the Annex E simplified Mcr and χLT (Cl. 8.2.2).
+  - Shear Vd and high-shear moment reduction (Cl. 8.4, 9.2.2); web d/tw ≤ 67ε.
+  - Service deflection span/240, /300 or /360 (Table 6).
+- **Beam-columns:** section check (Cl. 9.3.1.3) and the two member-buckling interaction equations with Ky, Kz and KLT (Cl. 9.3.2.2).
+- **Connections:**
+  - Bearing bolts 4.6 / 8.8: shear and bearing (kb), pitch, edge distance, long-joint flag (Cl. 10.3).
+  - Fillet welds: fwd, effective length, minimum size (Table 21) and maximum size (Cl. 10.5).
+
 ## FEM analysis (RFEM-style 3D frame)
 
 - 6 DOF per node, Euler–Bernoulli members, rigid joints, linear static, direct stiffness method, Cholesky solver.

@@ -57,8 +57,8 @@ val MODULES = listOf(
         ),
     ),
     StructuraModule(
-        "Steel Design", "IS 800 · IS 808 · IS 4923", Icons.Filled.Architecture, 2,
-        listOf(ModuleTool("Beam / purlin", null), ModuleTool("Column / strut", null), ModuleTool("Tension member", null), ModuleTool("Bolted / welded joint", null)),
+        "Steel Design", "IS 800 · IS 808 · IS 4923", Icons.Filled.Architecture, 1,
+        listOf(ModuleTool("Beams, columns, tension, beam-columns", Routes.STEEL), ModuleTool("Bolted / welded connections", Routes.STEEL)),
     ),
     StructuraModule(
         "FEM Analysis + AI", "3D frame FEM · N / V / M diagrams · RFEM-style", Icons.Filled.AccountTree, 1,

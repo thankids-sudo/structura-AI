@@ -15,10 +15,12 @@ Each step is built, tested and committed separately.
 - [x] 1.7 Bar bending schedule export (CSV / Excel)
 
 ## Phase 2: Steel Design (IS 800:2007)
-- [ ] 2.1 Section database: IS 808 / IS 4923 (reuse the CivilStructuralToolkit JSON, ~1000 sections)
-- [ ] 2.2 Laterally supported / unsupported beams (Cl. 8.2), shear (Cl. 8.4), deflection (Table 6)
-- [ ] 2.3 Compression members (Cl. 7.1, buckling curves a–d)
-- [ ] 2.4 Tension members (Cl. 6); bolted & welded connections (Cl. 10)
+- [x] 2.1 Section library: ISMB / ISHB / ISMC / SHS / RHS / CHS / custom I (computed from IS 808 nominal dimensions)
+- [ ] 2.1b Full IS 808 table import (angles, ISLB, ISWB, ~1000 sections with tabulated properties)
+- [x] 2.2 Laterally supported / unsupported beams (Cl. 8.2), shear (Cl. 8.4), deflection (Table 6)
+- [x] 2.3 Compression members (Cl. 7.1, buckling curves a–d); beam-columns (Cl. 9.3)
+- [x] 2.4 Tension members (Cl. 6); bolted & welded connections (Cl. 10)
+- [ ] 2.5 Steel member checks straight from 3D Studio results
 
 ## Phase 3: Frame Analysis + AI
 - [x] 3.1 3D frame FEM (6 DOF/node): continuous beam, portal frame and space frame templates, N/V/M diagrams, deformed shape
