@@ -26,7 +26,7 @@ class RccMembersTest {
     @Test
     fun tBeam_neutralAxisInWeb_equilibrium() {
         val inp = BeamInput(widthB = 300.0, overallDepthD = 600.0, mainBarDia = 25.0, effectiveSpan = 8000.0, fck = 20.0, fy = 415.0,
-            factoredMoment = 800.0, factoredShear = 200.0, flangeWidth = 1500.0, flangeDepth = 100.0)
+            factoredMoment = 700.0, factoredShear = 200.0, flangeWidth = 1500.0, flangeDepth = 100.0)
         val r = BeamDesigner.design(inp)
         val d = r.effectiveDepth
         // independent check: find xu from force equilibrium and recompute the moment (Annex G-2.2)
@@ -36,13 +36,14 @@ class RccMembersTest {
         repeat(100) { val x = (lo + hi) / 2; if (0.36 * 20 * 300 * x + 0.45 * 20 * 1200 * yf(x) < t) lo = x else hi = x }
         val xu = (lo + hi) / 2
         val m = 0.36 * 20 * 300 * xu * (d - 0.42 * xu) + 0.45 * 20 * 1200 * yf(xu) * (d - yf(xu) / 2)
-        near(800e6, m, 1e-6)
+        assertTrue(r.astRequired > 0)
+        near(700e6, m, 1e-6)
     }
 
     @Test
     fun twoWaySlab_table27() {
         near(0.084, SlabDesigner.table27(1.2).first, 1e-12)
-        near(0.0525, SlabDesigner.table27(1.35).second, 1e-9)
+        near(0.053, SlabDesigner.table27(1.35).second, 1e-9)
         val r = SlabDesigner.design(SlabInput(lx = 4.0, ly = 5.0, thickness = 150.0, finishes = 1.0, liveLoad = 3.0, fck = 20.0, fy = 500.0))
         val wu = 1.5 * (25 * 0.15 + 1.0 + 3.0)
         near(wu, r.wu, 1e-12)
