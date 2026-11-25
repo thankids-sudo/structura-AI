@@ -141,6 +141,14 @@ After "Take-down & sizes": "SOR codes & rates" (saved on the phone) then
 - **EstimateX JSON** — `schema: structura-ai/boq-v1`: items with key, sorCode, description, unit, quantity, rate, amount and the measurement rows.
 Superstructure only (no foundations, masonry, finishes); steel by allowance until the BBS is made.
 
+## STAAD-workflow parity (CEE 330L) — see docs/CEE330L_MAPPING.md
+- **Members:** truss (axial only), tension-only (iterative), point moments at any distance (exact split), parametric T / I / channel / circle / triangle / angle sections with Iω, ISA and JIS angles, ACI Ec option.
+- **Supports & model:** roller about a chosen axis, elastic springs kx ky kz, 2D plane (XZ) mode; rotations with no stiffness (truss joints) are held automatically, as in STAAD.
+- **STATIC CHECK:** ΣF and ΣM about the origin, applied vs reactions, shown after every analysis ("Σ table").
+- **Generators:** translational repeat (steps, spacing list, link — storeys, bays, verandas), Fink roof truss, Pratt bridge truss.
+- **Lateral loads:** IS 1893 equivalent static (Ta, Ah, VB = Ah·W, Qi ∝ Wi·hi²) and IS 875-3 wind (k2 Table 2, pd, F = Cf·pd·Ae) as case WL.
+- **Benchmarks:** B1 pitched portal, B2 Fink, B3 Pratt, B4 3-storey building — CI tests `Cee330lBenchmarksTest` and Studio templates.
+
 ## FEM analysis (RFEM-style 3D frame)
 
 - 6 DOF per node, Euler–Bernoulli members, rigid joints, linear static, direct stiffness method, Cholesky solver.

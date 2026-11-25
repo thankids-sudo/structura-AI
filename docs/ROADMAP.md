@@ -48,3 +48,13 @@ Each step is built, tested and committed separately.
 - [x] 4.3 Load take-down and preliminary sizing of every member (slab lx/32, beam span/12, columns Cl. 39.3)
 - [x] 4.4 Export the design summary and quantities (CSV); 3D model straight into Studio
 - [x] 4.4b Hand-over to EstimateX / JAUEstimate: BOQ .xlsx (Measurement + Abstract with live formulas, bordered) and JSON (schema structura-ai/boq-v1) with the user's SOR codes and rates
+
+## Phase 5 — STAAD workflow parity (CEE 330L)
+- [x] 5.1 Truss / tension-only members, roller & spring supports, 2D plane mode, point moments
+- [x] 5.2 Six-component STATIC CHECK
+- [x] 5.3 Parametric sections (T, I, channel, circle, triangle, angle) with Iω; ISA / JIS angles; ACI Ec
+- [x] 5.4 Translational repeat, Fink and Pratt truss generators
+- [x] 5.5 IS 1893 equivalent static and IS 875-3 wind load generators
+- [x] 5.6 CEE 330L benchmark suite B1–B4 (CI) + Studio templates
+- [ ] 5.7 Inclined supports; 14-DOF warping kernel (bimoment); imperial-unit UI
+
