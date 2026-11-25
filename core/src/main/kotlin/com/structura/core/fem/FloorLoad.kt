@@ -113,8 +113,12 @@ object FloorLoad {
      */
     fun applyToLevel(model: FrameModel, z: Double, q: Double, case: String, mode: Mode = Mode.AUTO): Result {
         val level = model.nodes.filter { abs(it.z - z) < 1e-4 }
-        val xs = level.map { it.x }.distinctBy { Math.round(it * 1e4) }.sorted()
-        val ys = level.map { it.y }.distinctBy { Math.round(it * 1e4) }.sorted()
+        // grid lines: coordinates shared by nodes on at least two different lines (ignores lone split nodes)
+        fun key(v: Double) = Math.round(v * 1e4)
+        val xs = level.groupBy { key(it.x) }.filter { (_, ns) -> ns.map { key(it.y) }.distinct().size >= 2 }
+            .map { it.value.first().x }.sorted()
+        val ys = level.groupBy { key(it.y) }.filter { (_, ns) -> ns.map { key(it.x) }.distinct().size >= 2 }
+            .map { it.value.first().y }.sorted()
         fun nodeAt(x: Double, y: Double) = level.firstOrNull { abs(it.x - x) < 1e-4 && abs(it.y - y) < 1e-4 }?.id
         fun hasBeam(a: Int, b: Int): Boolean {
             val pa = model.node(a).pos; val pb = model.node(b).pos
