@@ -198,6 +198,15 @@ internal fun SupportExtras(model: FrameModel, id: Int, onApply: (FrameModel, Str
     var kx by remember(id) { mutableStateOf(s?.springs?.get(0)?.takeIf { it > 0 }?.toString() ?: "") }
     var ky by remember(id) { mutableStateOf(s?.springs?.get(1)?.takeIf { it > 0 }?.toString() ?: "") }
     var kz by remember(id) { mutableStateOf(s?.springs?.get(2)?.takeIf { it > 0 }?.toString() ?: "") }
+    var inc by remember(id) { mutableStateOf(s?.inclination?.get(1)?.toString() ?: "0") }
+    if (s != null) Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        N("Incline about Y (°)", inc, Modifier.weight(1f)) { inc = it }
+        OutlinedButton(onClick = {
+            val a = d(inc, 0.0)
+            onApply(model.copy(supports = model.supports.map { if (it.node == id) it.copy(inclination = if (a == 0.0) null else listOf(0.0, a, 0.0)) else it }),
+                "N$id support axes rotated ${a}° about Y (restraints act along the inclined axes)")
+        }) { Text("Incline") }
+    }
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         listOf("Roller Z", "Roller Y").forEachIndexed { i, l ->
             FilterChip(false, { onApply(model.copy(supports = model.supports.filter { it.node != id } + Support.roller(id, if (i == 0) 2 else 1)), "N$id: ${l.lowercase()}") }, { Text(l) })

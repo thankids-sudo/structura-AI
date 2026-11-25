@@ -147,6 +147,8 @@ Superstructure only (no foundations, masonry, finishes); steel by allowance unti
 - **STATIC CHECK:** ΣF and ΣM about the origin, applied vs reactions, shown after every analysis ("Σ table").
 - **Generators:** translational repeat (steps, spacing list, link — storeys, bays, verandas), Fink roof truss, Pratt bridge truss.
 - **Lateral loads:** IS 1893 equivalent static (Ta, Ah, VB = Ah·W, Qi ∝ Wi·hi²) and IS 875-3 wind (k2 Table 2, pd, F = Cf·pd·Ae) as case WL.
+- **Warping torsion:** for I / channel / T / angle sections (Iω > 0) switch "Warping fixed i / j" in the member editor; torsional stiffness becomes GIt / (L − tanh(λL)/λ) etc. (λ = √(GIt/EIω)), and the editor shows the bimoment and St Venant / warping torque split after analysis.
+- **Inclined supports:** node editor → "Incline about Y (°)": restraints and springs act along the rotated axes; reactions are reported in global axes.
 - **Benchmarks:** B1 pitched portal, B2 Fink, B3 Pratt, B4 3-storey building — CI tests `Cee330lBenchmarksTest` and Studio templates.
 
 ## FEM analysis (RFEM-style 3D frame)

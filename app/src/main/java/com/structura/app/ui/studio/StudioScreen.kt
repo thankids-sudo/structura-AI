@@ -603,7 +603,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 SupportExtras(model, id) { m, msg -> commit(m, msg) }
             }
             selMember?.takeIf { tool == Tool.SELECT && model.members.any { m -> m.id == it } }?.let { id ->
-                MemberEditor(model, id, onApply = { m, msg -> commit(m, msg) }, onClose = { selMember = null })
+                MemberEditor(model, id, onApply = { m, msg -> commit(m, msg) }, onClose = { selMember = null }, results = results)
             }
             selPanel?.takeIf { tool == Tool.SELECT && model.panels.any { p -> p.id == it } }?.let { id ->
                 PanelEditor(model, id, results, onApply = { m, msg -> commit(m, msg) }, onClose = { selPanel = null })
@@ -753,7 +753,7 @@ private fun NodeEditor(model: FrameModel, id: Int, onApply: (FrameModel, String)
 }
 
 @Composable
-private fun MemberEditor(model: FrameModel, id: Int, onApply: (FrameModel, String) -> Unit, onClose: () -> Unit) {
+private fun MemberEditor(model: FrameModel, id: Int, onApply: (FrameModel, String) -> Unit, onClose: () -> Unit, results: FrameResults? = null) {
     val m = model.members.first { it.id == id }
     val spec = remember(id, m) { SectionSpec().also { it.from(m.section, m.material) } }
     var ki by remember(id, m) { mutableStateOf(m.springI?.let { fmt(it) } ?: "") }
@@ -776,6 +776,24 @@ private fun MemberEditor(model: FrameModel, id: Int, onApply: (FrameModel, Strin
                 Text("  Truss (axial only)   ", style = MaterialTheme.typography.bodySmall)
                 Switch(m.tensionOnly, { v -> onApply(ModelEditor.updateMember(model, id) { it.copy(tensionOnly = v) }, "M$id tension-only: $v") })
                 Text("  Tension only", style = MaterialTheme.typography.bodySmall)
+            }
+            if (m.section.iw > 0) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(m.warpI, { v -> onApply(ModelEditor.updateMember(model, id) { it.copy(warpI = v) }, "M$id warping restrained at i: $v") })
+                    Text("  Warping fixed i   ", style = MaterialTheme.typography.bodySmall)
+                    Switch(m.warpJ, { v -> onApply(ModelEditor.updateMember(model, id) { it.copy(warpJ = v) }, "M$id warping restrained at j: $v") })
+                    Text("  Warping fixed j", style = MaterialTheme.typography.bodySmall)
+                }
+                Text("Iω = ${"%.3e".format(m.section.iw)} m⁶. Restrain warping at fixed bases / end plates for non-uniform (Vlasov) torsion.",
+                    style = MaterialTheme.typography.labelSmall)
+                results?.takeIf { r -> r.model.members.any { it.id == id } }?.let { r ->
+                    val w = runCatching { r.warping(id, 20) }.getOrNull()
+                    if (w != null) {
+                        val bmax = w.maxByOrNull { kotlin.math.abs(it.bimoment) }!!
+                        Text("Bimoment max ${"%.4f".format(bmax.bimoment)} kN·m² at ${fmt(bmax.s)} m; St Venant / warping torque at i: " +
+                            "${"%.3f".format(w.first().stVenant)} / ${"%.3f".format(w.first().warpingTorque)} kN·m", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
             }
             var pmA by remember(id) { mutableStateOf(fmt(len / 2)) }
             var pmM by remember(id) { mutableStateOf("10") }

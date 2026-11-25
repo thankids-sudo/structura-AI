@@ -56,5 +56,7 @@ Each step is built, tested and committed separately.
 - [x] 5.4 Translational repeat, Fink and Pratt truss generators
 - [x] 5.5 IS 1893 equivalent static and IS 875-3 wind load generators
 - [x] 5.6 CEE 330L benchmark suite B1–B4 (CI) + Studio templates
-- [ ] 5.7 Inclined supports; 14-DOF warping kernel (bimoment); imperial-unit UI
+- [x] 5.7 Inclined supports (support axes rotated, reactions reported globally)
+- [x] 5.8 Non-uniform (Vlasov) warping torsion: warping restrained/free per member end, exact torsional stiffness, bimoment / St Venant / warping torque output
+- [x] 5.9 Imperial ↔ SI unit converter (Loads screen); benchmarks convert at the boundary
 

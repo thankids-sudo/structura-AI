@@ -83,6 +83,7 @@ fun LoadsScreen(onBack: () -> Unit) {
                 Text(String.format(Locale.US, "w = %.3f × %.2f × %.2f + 2 × 0.012 × 20.4 × %.2f = %.2f kN/m", n(wt, 230.0) / 1000, g, n(wh, 2.75), n(wh, 2.75), wl), fontWeight = FontWeight.SemiBold)
                 Text(String.format(Locale.US, "If partitions are not on beams: UDL ≥ max(1.0, w/3) = %.2f kN/m² over the floor.", IS875.partitionAllowance(wl)), style = MaterialTheme.typography.bodySmall)
             }
+            Sec("Unit converter — imperial ↔ SI (STAAD / ACI drawings)") { UnitConverter() }
             Sec("Unit weights (IS 875-1 Table 1)") {
                 IS875.unitWeights.forEach { Text(String.format(Locale.US, "%-34s %6.2f kN/m³  %s", it.material, it.kNm3, it.source), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
             }
@@ -115,4 +116,23 @@ private fun Sec(title: String, content: @Composable () -> Unit) {
 private fun F(label: String, value: String, modifier: Modifier, onChange: (String) -> Unit) {
     OutlinedTextField(value, onChange, label = { Text(label) }, singleLine = true, modifier = modifier,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+}
+
+private val UNITS = listOf(
+    Triple("kip", "kN", 4.4482216), Triple("ft", "m", 0.3048), Triple("in", "mm", 25.4), Triple("kip/ft", "kN/m", 14.593903),
+    Triple("ksi", "MPa", 6.8947573), Triple("psi", "MPa", 0.0068947573), Triple("kip·ft", "kN·m", 1.3558179), Triple("psf", "kN/m²", 0.04788026),
+    Triple("pcf", "kN/m³", 0.15708746), Triple("in²", "mm²", 645.16), Triple("in⁴", "mm⁴", 416231.43),
+)
+
+@Composable
+private fun UnitConverter() {
+    var k by rememberSaveable { mutableStateOf(0) }
+    var v by rememberSaveable { mutableStateOf("1") }
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        UNITS.forEachIndexed { i, (a, b, _) -> FilterChip(i == k, { k = i }, { Text("$a → $b") }) }
+    }
+    F("Value", v, Modifier.fillMaxWidth()) { v = it }
+    val x = v.replace(',', '.').toDoubleOrNull() ?: 0.0
+    val (a, b, f) = UNITS[k]
+    Text(String.format(Locale.US, "%.4f %s = %.4f %s     |     %.4f %s = %.4f %s", x, a, x * f, b, x, b, x / f, a), fontWeight = FontWeight.SemiBold)
 }
