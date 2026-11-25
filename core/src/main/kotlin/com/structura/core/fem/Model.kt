@@ -74,8 +74,9 @@ data class Section(
     val b: Double = 0.0, val h: Double = 0.0,
     /** Shear areas for Timoshenko theory (m²) for shear along local y / z; 0 = shear-rigid. */
     val asy: Double = 0.0, val asz: Double = 0.0,
-    /** RECT, CHS, SHS, RHS or GENERAL; [t] = wall thickness (m) for tubes. */
+    /** RECT, CHS, SHS, RHS, I, CHANNEL or GENERAL; [t] = wall / flange thickness (m), [tw] = web thickness (m) for I and channels. */
     val shape: String = "GENERAL", val t: Double = 0.0,
+    val tw: Double = 0.0,
 ) {
     val isSolidRectangle: Boolean get() = shape == "RECT"
 
