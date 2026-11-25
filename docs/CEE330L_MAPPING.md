@@ -26,6 +26,8 @@ Each requirement was mapped to that architecture; this table records what was bu
 | Node inspector / member force graphs | Node inspector added (6 displacements + reaction); member N/V/M diagrams existing | Studio |
 | Tables: displacements, reactions, end forces (CSV/JSON) | Existing (FEM CSV, Engineering JSON, HTML report) | `FemReport.csv`, `EngineeringJson` |
 | IS 1893 equivalent static, IS 875-3 wind | Done — VB = Ah·W, Qi ∝ Wi·hi²; Vz, pz, pd, F = Cf·pd·Ae | `fem/LateralLoads.kt`, Studio "≋ IS 1893 / wind" |
+| IS 1893 accidental eccentricity, 100 %/30 % | Done — `seismicStatic(eccentricity)`, `LoadCombination.seismic100_30()` | `fem/LateralLoads.kt`, `fem/Model.kt` |
+| Steel angle design | Done — `steel/AngleDesign.kt`; B2 Fink L 60×60×4 under 10 kN panel loads gives η = 2.67 (fails: the manual's angle is for its own loading) | Steel screen, Studio steel checks |
 | Benchmark suite B1–B4 + templates | Done — `Cee330lBenchmarksTest`, Studio "Benchmarks / trusses" | `core/src/test/.../verification/` |
 | React / Zustand / AG Grid / WebGPU / gRPC / origin attribution / proto | Not applicable to the Android architecture | — |
 

@@ -148,6 +148,8 @@ Superstructure only (no foundations, masonry, finishes); steel by allowance unti
 - **Generators:** translational repeat (steps, spacing list, link — storeys, bays, verandas), Fink roof truss, Pratt bridge truss.
 - **Lateral loads:** IS 1893 equivalent static (Ta, Ah, VB = Ah·W, Qi ∝ Wi·hi²) and IS 875-3 wind (k2 Table 2, pd, F = Cf·pd·Ae) as case WL.
 - **Warping torsion:** for I / channel / T / angle sections (Iω > 0) switch "Warping fixed i / j" in the member editor; torsional stiffness becomes GIt / (L − tanh(λL)/λ) etc. (λ = √(GIt/EIω)), and the editor shows the bimoment and St Venant / warping torque split after analysis.
+- **Single angles (IS 800):** Steel → "Single angle" or any ISA / JIS angle member in Studio → ⚙ Steel checks: tension (yielding, rupture α·An·fu/γm1 with α 0.6/0.7/0.8 by bolt count), compression by Cl. 7.5.1.2 (λe = √(k1 + k2λvv² + k3λφ²), Table 12, curve c), Table 2 classification, slenderness 180 / 400. rvv from the principal axes (60×60×6: 11.8 mm vs 11.7 tabulated). Block shear not included.
+- **Seismic X and Y:** "≋ IS 1893 / wind" → "EX + EY (100 % + 30 %)" writes cases EX and EY with ±5 % accidental eccentricity (storey force shifted off the centre of mass so the storey torque = Q·0.05·b, Cl. 7.8.2). Analyse then runs the 25 combinations 1.5(DL+LL), 1.2(DL+LL±EL), 1.5(DL±EL), 0.9DL±1.5EL with EL = ±EX ± 0.3EY and ±EY ± 0.3EX (Cl. 6.3.4.1).
 - **Inclined supports:** node editor → "Incline about Y (°)": restraints and springs act along the rotated axes; reactions are reported in global axes.
 - **Benchmarks:** B1 pitched portal, B2 Fink, B3 Pratt, B4 3-storey building — CI tests `Cee330lBenchmarksTest` and Studio templates.
 

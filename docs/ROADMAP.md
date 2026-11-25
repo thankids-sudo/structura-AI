@@ -59,4 +59,6 @@ Each step is built, tested and committed separately.
 - [x] 5.7 Inclined supports (support axes rotated, reactions reported globally)
 - [x] 5.8 Non-uniform (Vlasov) warping torsion: warping restrained/free per member end, exact torsional stiffness, bimoment / St Venant / warping torque output
 - [x] 5.9 Imperial ↔ SI unit converter (Loads screen); benchmarks convert at the boundary
-
+- [x] 5.10 IS 800 single-angle members: tension Cl. 6.2 / 6.3.3 (α·An·fu/γm1), compression Cl. 7.5.1.2 (λe, Table 12), Table 2 classification; angles in Studio steel checks; Steel screen "Single angle"
+- [x] 5.11 IS 1893 accidental eccentricity ±5 % (Cl. 7.8.2) and EX / EY cases with 100 % + 30 % combinations (Cl. 6.3.4.1, 25 combinations)
+- [ ] 5.12 Warping continuity across joints (7th DOF); imperial input in the editors; block shear (Cl. 6.4)
