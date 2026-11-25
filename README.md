@@ -33,6 +33,12 @@ structura-ai/
 
 All the code-specific logic lives in `:core`, so the same engine can later serve a web app or an API.
 
+## Install on a phone
+
+**Latest APK (direct link):** https://github.com/thankids-sudo/structura-ai/releases/latest/download/StructuraAI.apk
+
+Every push to `main` builds the APK, signs it with the fixed key in `keystore/`, checks it with `apksigner`, and publishes it as a GitHub Release. All builds share one signature and a rising version number, so each new APK installs over the previous one as an update.
+
 ## Build & run
 
 1. Open the folder in **Android Studio (Koala 2024.1 or newer)**. It downloads Gradle 8.9 and AGP 8.5.2 on first sync.

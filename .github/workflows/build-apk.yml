@@ -15,42 +15,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Unpack uploaded project zip (first run only)
-        run: |
-          if [ -f StructuraAI-Phase1.zip ]; then
-            unzip -q -o StructuraAI-Phase1.zip -d /tmp/upload
-            rsync -a --exclude '.github' /tmp/upload/structura-ai/ ./
-            git rm -q --cached StructuraAI-Phase1.zip
-            rm -f StructuraAI-Phase1.zip
-            git config user.name  "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -A
-            git update-index --chmod=+x gradlew
-            git commit -m "Unpack StructuraAI-Phase1.zip into repository"
-            git push
-          fi
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      
-
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Run engine tests (IS 456)
+      - name: Run engine tests (IS 456, FEM, drawing)
         run: |
           chmod +x gradlew
           ./gradlew :core:test --no-daemon
 
-      - name: Build debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon
+      - name: Build signed release APK
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Verify APK (signature + manifest)
+        run: |
+          APK=app/build/outputs/apk/release/app-release.apk
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          $BT/apksigner verify --verbose --print-certs "$APK"
+          $BT/aapt2 dump badging "$APK" | head -5
+          unzip -tq "$APK"
+          cp "$APK" StructuraAI.apk
+          ls -l StructuraAI.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: StructuraAI-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: StructuraAI-apk
+          path: StructuraAI.apk
+
+      - name: Publish as GitHub Release (direct download link)
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Structura AI build ${{ github.run_number }}
+          body: |
+            Signed APK, built and checked automatically from commit ${{ github.sha }}.
+            Direct link to the newest build: https://github.com/${{ github.repository }}/releases/latest/download/StructuraAI.apk
+          files: StructuraAI.apk
+          make_latest: true
 
       - if: always()
         uses: actions/upload-artifact@v4

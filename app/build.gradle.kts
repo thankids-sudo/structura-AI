@@ -12,13 +12,31 @@ android {
         applicationId = "com.structura.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0-phase1"
+        // CI run number → every build is a higher version, so it installs as an update over the previous one
+        versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
+        versionName = "0.5." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
+    }
+
+    // One fixed key for every build (debug and release), so new APKs install over old ones.
+    // This key is for sideloading only. Use a private key before any Play Store upload.
+    signingConfigs {
+        create("structura") {
+            storeFile = rootProject.file("keystore/structura-debug.jks")
+            storePassword = "structura"
+            keyAlias = "structura"
+            keyPassword = "structura"
+            enableV1Signing = true
+            enableV2Signing = true
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("structura")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("structura")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
