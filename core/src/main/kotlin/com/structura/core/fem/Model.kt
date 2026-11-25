@@ -137,6 +137,9 @@ data class Member(
     /** Rotational spring at end i / j (kN·m/rad, about local y and z); null = rigid joint. Semi-rigid connection. */
     val springI: Double? = null,
     val springJ: Double? = null,
+    /** Rigid end offsets (m) measured along the member from node i / node j (joint zones). */
+    val offsetI: Double = 0.0,
+    val offsetJ: Double = 0.0,
 ) {
     /** Effective end condition: null = rigid, 0 = hinge, > 0 = spring stiffness. */
     val endI: Double? get() = if (hingeI) 0.0 else springI
@@ -177,8 +180,46 @@ data class NodalLoad(val node: Int, val values: List<Double>, val case: String =
 
 enum class LoadDir { GLOBAL_X, GLOBAL_Y, GLOBAL_Z, LOCAL_X, LOCAL_Y, LOCAL_Z }
 
-/** Uniform member load over the true member length, kN/m (gravity = GLOBAL_Z with negative w). */
-data class MemberLoad(val member: Int, val dir: LoadDir, val w: Double, val case: String = LoadCase.DL)
+/**
+ * Distributed member load, kN/m over the true length (gravity = GLOBAL_Z with negative w).
+ * Uniform over the whole member by default; give [a]/[b] (m from node i) for a partial load and
+ * [w2] (intensity at b) for a trapezoidal / triangular load varying linearly from [w] at a.
+ */
+data class MemberLoad(
+    val member: Int, val dir: LoadDir, val w: Double, val case: String = LoadCase.DL,
+    val a: Double? = null, val b: Double? = null, val w2: Double? = null,
+) {
+    val isUniformFull: Boolean get() = a == null && b == null && (w2 == null || w2 == w)
+}
+
+/**
+ * Four-node flat shell panel (Q4: membrane + Mindlin plate, 6 DOF per node).
+ * [nodes] in order around the panel; the normal follows the right-hand rule (anticlockwise seen from +normal).
+ * [pressure] kN/m² acts along the panel normal (+ = along the normal), in load case [case].
+ * Units: t in m, E and G in kN/m², γ in kN/m³.
+ */
+data class Panel(
+    val id: Int,
+    val nodes: List<Int>,
+    val t: Double,
+    val e: Double,
+    val g: Double,
+    val nu: Double,
+    val gamma: Double,
+    val pressure: Double = 0.0,
+    val case: String = LoadCase.LL,
+    val name: String = "Panel",
+) {
+    init { require(nodes.size == 4) { "A panel needs 4 nodes" } }
+
+    companion object {
+        /** RCC slab: E = 5000√fck MPa, ν = 0.2, γ = 25 kN/m³. */
+        fun rcc(id: Int, nodes: List<Int>, t: Double, fck: Double = 25.0, pressure: Double = 0.0, case: String = LoadCase.LL): Panel {
+            val e = 5000 * sqrt(fck) * 1000
+            return Panel(id, nodes, t, e, e / 2.4, 0.2, 25.0, pressure, case, "RCC M${fck.toInt()} slab")
+        }
+    }
+}
 
 /** Concentrated force [p] (kN) on a member at distance [a] (m) from node i. */
 data class PointLoad(val member: Int, val dir: LoadDir, val p: Double, val a: Double, val case: String = LoadCase.DL)
@@ -230,12 +271,14 @@ data class FrameModel(
     /** Multiplier on self-weight (set by load combinations). */
     val selfWeightFactor: Double = 1.0,
     val beamTheory: BeamTheory = BeamTheory.EULER,
+    val panels: List<Panel> = emptyList(),
 ) {
     /** Load cases present in this model (DL is always present when self-weight is on). */
     val loadCases: Set<String>
         get() = buildSet {
             if (selfWeight) add(LoadCase.DL)
             nodalLoads.forEach { add(it.case) }; memberLoads.forEach { add(it.case) }; pointLoads.forEach { add(it.case) }
+            panels.filter { it.pressure != 0.0 }.forEach { add(it.case) }
         }
 
     /** The same model with every load multiplied by its combination factor (linear superposition). */
@@ -244,7 +287,8 @@ data class FrameModel(
         fun f(case: String) = if (case == LoadCase.TAP) 1.0 else c.factor(case)
         return copy(
             nodalLoads = nodalLoads.mapNotNull { l -> f(l.case).takeIf { it != 0.0 }?.let { k -> l.copy(values = l.values.map { it * k }) } },
-            memberLoads = memberLoads.mapNotNull { l -> f(l.case).takeIf { it != 0.0 }?.let { k -> l.copy(w = l.w * k) } },
+            memberLoads = memberLoads.mapNotNull { l -> f(l.case).takeIf { it != 0.0 }?.let { k -> l.copy(w = l.w * k, w2 = l.w2?.times(k)) } },
+            panels = panels.map { p -> p.copy(pressure = p.pressure * f(p.case)) },
             pointLoads = pointLoads.mapNotNull { l -> f(l.case).takeIf { it != 0.0 }?.let { k -> l.copy(p = l.p * k) } },
             selfWeightFactor = if (selfWeight) c.selfWeightFactor * selfWeightFactor else 0.0,
             title = "$title — ${c.name}",

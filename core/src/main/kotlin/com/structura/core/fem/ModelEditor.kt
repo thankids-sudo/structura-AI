@@ -96,6 +96,7 @@ object ModelEditor {
     fun deleteNode(m: FrameModel, id: Int): FrameModel {
         val gone = m.members.filter { it.i == id || it.j == id }.map { it.id }.toSet()
         return m.copy(
+            panels = m.panels.filter { id !in it.nodes },
             nodes = m.nodes.filter { it.id != id },
             members = m.members.filter { it.id !in gone },
             supports = m.supports.filter { it.node != id },
@@ -107,7 +108,7 @@ object ModelEditor {
 
     private fun removeOrphans(m: FrameModel): FrameModel {
         val used = m.members.flatMap { listOf(it.i, it.j) }.toSet() +
-            m.supports.map { it.node } + m.nodalLoads.map { it.node }
+            m.supports.map { it.node } + m.nodalLoads.map { it.node } + m.panels.flatMap { it.nodes }
         return m.copy(nodes = m.nodes.filter { it.id in used })
     }
 
@@ -124,10 +125,21 @@ object ModelEditor {
         val len = (b - a).length
         val (m1, nid) = addNode(m, a + (b - a) * t)
         val id2 = nextMemberId(m1)
-        val first = mem.copy(j = nid, hingeJ = false)
-        val second = mem.copy(id = id2, i = nid, hingeI = false)
         val la = len * t
-        val udl = m1.memberLoads.filter { it.member == id }.map { it.copy(member = id2) }
+        require(la > mem.offsetI && len - la > mem.offsetJ) { "Split point lies inside a rigid end offset" }
+        val first = mem.copy(j = nid, hingeJ = false, springJ = null, offsetJ = 0.0)
+        val second = mem.copy(id = id2, i = nid, hingeI = false, springI = null, offsetI = 0.0)
+        // distributed loads: full uniform loads copy to both parts; partial / trapezoidal loads are clipped
+        val split = m1.memberLoads.filter { it.member == id }.flatMap { ml ->
+            if (ml.isUniformFull) return@flatMap listOf(ml, ml.copy(member = id2))
+            val a = (ml.a ?: 0.0).coerceIn(0.0, len); val b = (ml.b ?: len).coerceIn(a, len)
+            val w1 = ml.w; val w2 = ml.w2 ?: ml.w
+            fun at(s: Double) = if (b - a < 1e-12) w1 else w1 + (w2 - w1) * (s - a) / (b - a)
+            buildList {
+                if (a < la) add(ml.copy(a = a, b = minOf(b, la), w = w1, w2 = at(minOf(b, la))))
+                if (b > la) add(ml.copy(member = id2, a = maxOf(a, la) - la, b = b - la, w = at(maxOf(a, la)), w2 = w2))
+            }
+        }
         val points = m1.pointLoads.map { p ->
             if (p.member != id) p
             else if (p.a <= la) p
@@ -135,7 +147,7 @@ object ModelEditor {
         }
         return m1.copy(
             members = m1.members.flatMap { if (it.id == id) listOf(first, second) else listOf(it) },
-            memberLoads = m1.memberLoads + udl,
+            memberLoads = m1.memberLoads.filter { it.member != id } + split,
             pointLoads = points,
         ) to nid
     }
@@ -163,12 +175,64 @@ object ModelEditor {
         return cur to map
     }
 
+    fun nextPanelId(m: FrameModel) = (m.panels.maxOfOrNull { it.id } ?: 0) + 1
+
+    /** Adds a quadrilateral panel on 4 existing nodes (in order around the panel). */
+    fun addPanel(m: FrameModel, nodes: List<Int>, proto: Panel): Pair<FrameModel, Int> {
+        require(nodes.size == 4 && nodes.distinct().size == 4) { "Pick 4 different nodes around the panel" }
+        val id = nextPanelId(m)
+        return m.copy(panels = m.panels + proto.copy(id = id, nodes = nodes)) to id
+    }
+
+    fun updatePanel(m: FrameModel, id: Int, f: (Panel) -> Panel) = m.copy(panels = m.panels.map { if (it.id == id) f(it) else it })
+
+    fun deletePanel(m: FrameModel, id: Int) = removeOrphans(m.copy(panels = m.panels.filter { it.id != id }))
+
+    /**
+     * Panel mesh: replaces a panel by nx × ny panels on a bilinear grid of new nodes, and splits any member
+     * lying along a panel edge at the new edge nodes so beams and slab stay connected.
+     */
+    fun meshPanel(m: FrameModel, id: Int, nx: Int, ny: Int): FrameModel {
+        require(nx >= 1 && ny >= 1)
+        val p = m.panels.first { it.id == id }
+        val c = p.nodes.map { m.node(it).pos }
+        fun at(u: Double, v: Double) = c[0] * ((1 - u) * (1 - v)) + c[1] * (u * (1 - v)) + c[2] * (u * v) + c[3] * ((1 - u) * v)
+        var cur = m
+        // split edge members first so their new nodes are reused by the grid
+        val edges = listOf(0 to 1, 1 to 2, 2 to 3, 3 to 0)
+        for ((k, e) in edges.withIndex()) {
+            val na = p.nodes[e.first]; val nb = p.nodes[e.second]
+            val div = if (k % 2 == 0) nx else ny
+            var mem = cur.members.firstOrNull { (it.i == na && it.j == nb) || (it.i == nb && it.j == na) } ?: continue
+            val forward = mem.i == na
+            for (q in 1 until div) {
+                // split the remaining piece so the next node lands at q/div along the edge from na
+                val remainingFrac = 1.0 / (div - q + 1)
+                val t = if (forward) remainingFrac else 1 - remainingFrac
+                val (next, _) = splitMember(cur, mem.id, t)
+                cur = next
+                val newId = cur.members.maxOf { it.id }
+                mem = if (forward) cur.members.first { it.id == newId } else cur.members.first { it.id == mem.id }
+            }
+        }
+        val grid = Array(ny + 1) { IntArray(nx + 1) }
+        for (j in 0..ny) for (i in 0..nx) {
+            val (mm, nid) = addNode(cur, at(i.toDouble() / nx, j.toDouble() / ny)); cur = mm; grid[j][i] = nid
+        }
+        var nextId = nextPanelId(cur)
+        val newPanels = ArrayList<Panel>()
+        for (j in 0 until ny) for (i in 0 until nx) {
+            newPanels += p.copy(id = nextId++, nodes = listOf(grid[j][i], grid[j][i + 1], grid[j + 1][i + 1], grid[j + 1][i]))
+        }
+        return cur.copy(panels = cur.panels.filter { it.id != id } + newPanels)
+    }
+
     /** Quick model checks shown before analysis (like RFEM's "plausibility check"). */
     fun check(m: FrameModel): List<String> = buildList {
         if (m.nodes.isEmpty()) add("Model has no nodes.")
-        if (m.members.isEmpty()) add("Model has no members.")
+        if (m.members.isEmpty() && m.panels.isEmpty()) add("Model has no members.")
         if (m.supports.isEmpty()) add("No supports — add at least one fixed or pinned support.")
-        val connected = m.members.flatMap { listOf(it.i, it.j) }.toSet()
+        val connected = m.members.flatMap { listOf(it.i, it.j) }.toSet() + m.panels.flatMap { it.nodes }
         m.nodes.filter { it.id !in connected }.forEach { add("Node ${it.id} is not connected to any member.") }
         for (a in m.nodes.indices) for (b in a + 1 until m.nodes.size) {
             if ((m.nodes[a].pos - m.nodes[b].pos).length < MERGE_TOL)

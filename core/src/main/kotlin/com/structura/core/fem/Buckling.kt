@@ -49,7 +49,8 @@ object Buckling {
     }
 
     fun analyse(model: FrameModel, combination: LoadCombination = LoadCombination.ALL, segments: Int = 4): BucklingResult {
-        val fm = model.factored(combination)
+        // rigid end offsets are not carried into the subdivided buckling mesh (members use their full length)
+        val fm = model.factored(combination).let { it.copy(members = it.members.map { m -> m.copy(offsetI = 0.0, offsetJ = 0.0) }) }
         val (mesh, chains) = ModelEditor.subdivide(fm, segments)
         val lin = FrameSolver.analyse(mesh)
 
@@ -58,12 +59,11 @@ object Buckling {
         val kg = Array(nDof) { DoubleArray(nDof) }
         for (m in mesh.members) {
             val ax = FrameSolver.axes(mesh, m)
-            val kl = FrameSolver.endCondensation(m, FrameSolver.localStiffness(m, ax.length, mesh.beamTheory), DoubleArray(12)).k
             val fe = lin.memberEndForces[m.id]!!
             val p = (-fe[0] + fe[6]) / 2.0                        // axial force, tension +
             val kgl = geometricStiffness(p, ax.length, m.section)
             val r = FrameSolver.rotation(ax)
-            val kgG = FrameSolver.globalStiffness(kl, r)
+            val kgG = FrameSolver.memberGlobalStiffness(mesh, m)
             val kggG = FrameSolver.globalStiffness(kgl, r)
             val a0 = mesh.nodeIndex[m.i]!! * 6
             val b0 = mesh.nodeIndex[m.j]!! * 6
@@ -72,6 +72,11 @@ object Buckling {
                 k[idx[x]][idx[y]] += kgG[x][y]
                 kg[idx[x]][idx[y]] += kggG[x][y]
             }
+        }
+        for (p in mesh.panels) {
+            val kp = Shell.globalStiffness(mesh, p)
+            val idx = IntArray(24) { mesh.nodeIndex[p.nodes[it / 6]]!! * 6 + it % 6 }
+            for (x in 0 until 24) for (y in 0 until 24) k[idx[x]][idx[y]] += kp[x][y]
         }
         val fixed = BooleanArray(nDof)
         for (s in mesh.supports) {

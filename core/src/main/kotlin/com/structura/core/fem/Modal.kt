@@ -39,7 +39,8 @@ object Modal {
     const val G = 9.81
 
     fun analyse(model: FrameModel, nModes: Int = 6, llFactor: Double = 0.25, segments: Int = 4): ModalResult {
-        val (mesh, chains) = ModelEditor.subdivide(model, segments)
+        val plain = model.copy(members = model.members.map { it.copy(offsetI = 0.0, offsetJ = 0.0) })
+        val (mesh, chains) = ModelEditor.subdivide(plain, segments)
         val nDof = mesh.nodes.size * 6
         val k = Array(nDof) { DoubleArray(nDof) }
         val m = Array(nDof) { DoubleArray(nDof) }
@@ -49,10 +50,12 @@ object Modal {
         for (mem in mesh.members) {
             val ax = FrameSolver.axes(mesh, mem)
             val l = ax.length
-            val kl = FrameSolver.endCondensation(mem, FrameSolver.localStiffness(mem, l, mesh.beamTheory), DoubleArray(12)).k
             // mass per length (t/m): self-weight + gravity member loads converted to mass
             var mu = if (mesh.selfWeight) mem.material.gamma * mem.section.a / G else 0.0
-            for (ml in mesh.memberLoads) if (ml.member == mem.id && ml.dir == LoadDir.GLOBAL_Z) mu += abs(ml.w) * factor(ml.case) / G
+            for (ml in mesh.memberLoads) if (ml.member == mem.id && ml.dir == LoadDir.GLOBAL_Z) {
+                val a = (ml.a ?: 0.0).coerceIn(0.0, l); val b = (ml.b ?: l).coerceIn(a, l)
+                mu += abs((ml.w + (ml.w2 ?: ml.w)) / 2) * (b - a) / l * factor(ml.case) / G   // spread over the member
+            }
             val ml = consistentMass(mu, l, (mem.section.iy + mem.section.iz) / mem.section.a)
             // concentrated member loads → lumped at the nearer end of the segment
             for (pl in mesh.pointLoads) if (pl.member == mem.id && pl.dir == LoadDir.GLOBAL_Z) {
@@ -61,12 +64,20 @@ object Modal {
                 for (t in 0 until 3) ml[base + t][base + t] += mass
             }
             val r = FrameSolver.rotation(ax)
-            val kg = FrameSolver.globalStiffness(kl, r)
+            val kg = FrameSolver.memberGlobalStiffness(mesh, mem)
             val mg = FrameSolver.globalStiffness(ml, r)
             val a0 = mesh.nodeIndex[mem.i]!! * 6
             val b0 = mesh.nodeIndex[mem.j]!! * 6
             val idx = IntArray(12) { if (it < 6) a0 + it else b0 + it - 6 }
             for (x in 0 until 12) for (y in 0 until 12) { k[idx[x]][idx[y]] += kg[x][y]; m[idx[x]][idx[y]] += mg[x][y] }
+        }
+        for (p in mesh.panels) {
+            val kp = Shell.globalStiffness(mesh, p)
+            val idx = IntArray(24) { mesh.nodeIndex[p.nodes[it / 6]]!! * 6 + it % 6 }
+            for (x in 0 until 24) for (y in 0 until 24) k[idx[x]][idx[y]] += kp[x][y]
+            val area = Shell.area(Shell.frame(mesh, p))
+            val mass = ((if (mesh.selfWeight) p.gamma * p.t else 0.0) + abs(p.pressure) * factor(p.case)) * area / G / 4
+            for (n in 0 until 4) for (t in 0 until 3) m[idx[6 * n + t]][idx[6 * n + t]] += mass
         }
         for (nl in mesh.nodalLoads) {
             val mass = abs(nl.values[2]) * factor(nl.case) / G

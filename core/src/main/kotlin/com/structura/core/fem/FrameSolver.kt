@@ -24,8 +24,9 @@ data class Station(
 data class LocalPointLoad(val f: Vec3, val a: Double)
 
 /**
- * Linear-static 3D frame analysis by the direct stiffness method
- * (Euler–Bernoulli members, 6 DOF per node, rigid joints or moment hinges at member ends).
+ * Linear-static 3D frame + shell analysis by the direct stiffness method: Euler–Bernoulli or Timoshenko
+ * members (6 DOF per node), hinges / rotational springs and rigid offsets at member ends, uniform,
+ * partial, trapezoidal and concentrated member loads, and Q4 flat-shell panels ([Shell]).
  */
 object FrameSolver {
 
@@ -93,47 +94,6 @@ object FrameSolver {
         set(8, 8, 12 * eiy / l3); set(8, 10, 6 * eiy / l2)
         set(10, 10, (4 + pz) * eiy / l)
         return k
-    }
-
-    /** Total uniform load on a member in LOCAL axes (wx, wy, wz) kN/m, including factored self-weight. */
-    fun localUdl(model: FrameModel, m: Member, ax: MemberAxes): Vec3 {
-        var global = Vec3.ZERO
-        var local = Vec3.ZERO
-        for (ml in model.memberLoads) if (ml.member == m.id) when (ml.dir) {
-            LoadDir.GLOBAL_X -> global += Vec3(ml.w, 0.0, 0.0)
-            LoadDir.GLOBAL_Y -> global += Vec3(0.0, ml.w, 0.0)
-            LoadDir.GLOBAL_Z -> global += Vec3(0.0, 0.0, ml.w)
-            LoadDir.LOCAL_X -> local += Vec3(ml.w, 0.0, 0.0)
-            LoadDir.LOCAL_Y -> local += Vec3(0.0, ml.w, 0.0)
-            LoadDir.LOCAL_Z -> local += Vec3(0.0, 0.0, ml.w)
-        }
-        if (model.selfWeight) global += Vec3(0.0, 0.0, -m.material.gamma * m.section.a * model.selfWeightFactor)
-        return ax.toLocal(global) + local
-    }
-
-    fun localPointLoads(model: FrameModel, m: Member, ax: MemberAxes): List<LocalPointLoad> =
-        model.pointLoads.filter { it.member == m.id }.map { pl ->
-            require(pl.a in 0.0..ax.length) { "Point load on member ${m.id} at a = ${pl.a} m lies outside the member" }
-            val f = when (pl.dir) {
-                LoadDir.GLOBAL_X -> ax.toLocal(Vec3(pl.p, 0.0, 0.0))
-                LoadDir.GLOBAL_Y -> ax.toLocal(Vec3(0.0, pl.p, 0.0))
-                LoadDir.GLOBAL_Z -> ax.toLocal(Vec3(0.0, 0.0, pl.p))
-                LoadDir.LOCAL_X -> Vec3(pl.p, 0.0, 0.0)
-                LoadDir.LOCAL_Y -> Vec3(0.0, pl.p, 0.0)
-                LoadDir.LOCAL_Z -> Vec3(0.0, 0.0, pl.p)
-            }
-            LocalPointLoad(f, pl.a)
-        }
-
-    /** Equivalent nodal loads (local) of a uniform local load over length L. */
-    fun equivalentNodal(w: Vec3, l: Double): DoubleArray {
-        val f = DoubleArray(12)
-        f[0] = w.x * l / 2; f[6] = w.x * l / 2
-        f[1] = w.y * l / 2; f[7] = w.y * l / 2
-        f[5] = w.y * l * l / 12; f[11] = -w.y * l * l / 12
-        f[2] = w.z * l / 2; f[8] = w.z * l / 2
-        f[4] = -w.z * l * l / 12; f[10] = w.z * l * l / 12
-        return f
     }
 
     /**
@@ -262,14 +222,101 @@ object FrameSolver {
         return kg
     }
 
+    /** Local direction vector of a load of magnitude [v] in direction [dir]. */
+    fun localVector(dir: LoadDir, v: Double, ax: MemberAxes): Vec3 = when (dir) {
+        LoadDir.GLOBAL_X -> ax.toLocal(Vec3(v, 0.0, 0.0))
+        LoadDir.GLOBAL_Y -> ax.toLocal(Vec3(0.0, v, 0.0))
+        LoadDir.GLOBAL_Z -> ax.toLocal(Vec3(0.0, 0.0, v))
+        LoadDir.LOCAL_X -> Vec3(v, 0.0, 0.0)
+        LoadDir.LOCAL_Y -> Vec3(0.0, v, 0.0)
+        LoadDir.LOCAL_Z -> Vec3(0.0, 0.0, v)
+    }
+
+    /** All loads on a member in local axes: self-weight, distributed (uniform / partial / trapezoidal) and concentrated. */
+    fun memberLoads(model: FrameModel, m: Member, ax: MemberAxes): MemberLoads {
+        val l = ax.length
+        val dist = ArrayList<LocalDistLoad>()
+        if (model.selfWeight && model.selfWeightFactor != 0.0) {
+            val w = ax.toLocal(Vec3(0.0, 0.0, -m.material.gamma * m.section.a * model.selfWeightFactor))
+            dist += LocalDistLoad(0.0, l, w, w)
+        }
+        for (ml in model.memberLoads) if (ml.member == m.id) {
+            val a = (ml.a ?: 0.0).coerceIn(0.0, l)
+            val b = (ml.b ?: l).coerceIn(a, l)
+            if (b - a < 1e-9) continue
+            dist += LocalDistLoad(a, b, localVector(ml.dir, ml.w, ax), localVector(ml.dir, ml.w2 ?: ml.w, ax))
+        }
+        val pts = model.pointLoads.filter { it.member == m.id }.map { pl ->
+            require(pl.a in 0.0..l) { "Point load on member ${m.id} at a = ${pl.a} m lies outside the member" }
+            LocalPointLoad(localVector(pl.dir, pl.p, ax), pl.a)
+        }
+        return MemberLoads(dist, pts)
+    }
+
+    /** Offset transformation u_flexible-end = T·u_node (local), rigid arms along the member axis. */
+    fun offsetTransform(m: Member): Array<DoubleArray> {
+        val t = Array(12) { r -> DoubleArray(12) { c -> if (r == c) 1.0 else 0.0 } }
+        t[1][5] = m.offsetI; t[2][4] = -m.offsetI
+        t[7][11] = -m.offsetJ; t[8][10] = m.offsetJ
+        return t
+    }
+
+    private fun flexLength(m: Member, l: Double): Double {
+        val lf = l - m.offsetI - m.offsetJ
+        require(m.offsetI >= 0 && m.offsetJ >= 0 && lf > 0.05 * l) { "Member ${m.id}: rigid end offsets leave no flexible length" }
+        return lf
+    }
+
+    /**
+     * Equivalent loads of a member: fixed-end forces of the flexible part (flexible-end coordinates) and
+     * the loads standing on the rigid arms, transferred to the nodes (node-level, local axes).
+     * Distributed loads are integrated exactly (4-point Gauss of the point-load fixed-end forces).
+     */
+    fun memberEquivalent(m: Member, l: Double, loads: MemberLoads, theory: BeamTheory): Pair<DoubleArray, DoubleArray> {
+        val oi = m.offsetI; val oj = m.offsetJ
+        val lf = flexLength(m, l)
+        val (py, pz) = phi(m, lf, theory)
+        val flex = DoubleArray(12)
+        val arm = DoubleArray(12)
+        fun pointAt(f: Vec3, s: Double) {
+            when {
+                s < oi -> { arm[0] += f.x; arm[1] += f.y; arm[2] += f.z; val mm = Vec3(s, 0.0, 0.0) cross f; arm[3] += mm.x; arm[4] += mm.y; arm[5] += mm.z }
+                s > l - oj -> { arm[6] += f.x; arm[7] += f.y; arm[8] += f.z; val mm = Vec3(s - l, 0.0, 0.0) cross f; arm[9] += mm.x; arm[10] += mm.y; arm[11] += mm.z }
+                else -> { val e = equivalentNodal(LocalPointLoad(f, s - oi), lf, py, pz); for (k in 0 until 12) flex[k] += e[k] }
+            }
+        }
+        for (d in loads.dist) {
+            val cuts = listOf(d.a, d.b, oi, l - oj).filter { it >= d.a && it <= d.b }.sorted().distinct()
+            for (k in 1 until cuts.size) gauss(cuts[k - 1], cuts[k]) { s, w -> pointAt(d.at(s) * w, s) }
+        }
+        for (p in loads.points) pointAt(p.f, p.a)
+        return flex to arm
+    }
+
     private class MemberData(
         val ax: MemberAxes,
-        val klFull: Array<DoubleArray>,
-        val feqFull: DoubleArray,
+        val kNode: Array<DoubleArray>,
+        val fNode: DoubleArray,
         val cond: EndCondensation,
-        val w: Vec3,
-        val points: List<LocalPointLoad>,
+        val tOff: Array<DoubleArray>,
+        val loads: MemberLoads,
     )
+
+    /** Member stiffness in global axes (theory, springs/hinges and rigid offsets included). */
+    fun memberGlobalStiffness(model: FrameModel, m: Member): Array<DoubleArray> {
+        val ax = axes(model, m)
+        val lf = flexLength(m, ax.length)
+        val cond = endCondensation(m, localStiffness(m, lf, model.beamTheory), DoubleArray(12))
+        return globalStiffness(tTkt(offsetTransform(m), cond.k), rotation(ax))
+    }
+
+    private fun tTkt(t: Array<DoubleArray>, k: Array<DoubleArray>): Array<DoubleArray> {
+        val kt = Array(12) { i -> DoubleArray(12) { j -> var s = 0.0; for (q in 0 until 12) s += k[i][q] * t[q][j]; s } }
+        return Array(12) { i -> DoubleArray(12) { j -> var s = 0.0; for (q in 0 until 12) s += t[q][i] * kt[q][j]; s } }
+    }
+
+    private fun tTf(t: Array<DoubleArray>, f: DoubleArray) = DoubleArray(12) { i -> var s = 0.0; for (q in 0 until 12) s += t[q][i] * f[q]; s }
+    private fun tf(t: Array<DoubleArray>, u: DoubleArray) = DoubleArray(12) { i -> var s = 0.0; for (q in 0 until 12) s += t[i][q] * u[q]; s }
 
     /** Analyse one load combination (factored loads superposed in a single solve). */
     fun analyse(model: FrameModel, combination: LoadCombination): FrameResults = analyse(model.factored(combination))
@@ -280,7 +327,7 @@ object FrameSolver {
 
     /** Analyse the model with every load × 1.0. */
     fun analyse(model: FrameModel): FrameResults {
-        require(model.members.isNotEmpty()) { "Model has no members" }
+        require(model.members.isNotEmpty() || model.panels.isNotEmpty()) { "Model has no members or panels" }
         require(model.supports.isNotEmpty()) { "Model has no supports" }
         val nDof = model.nodes.size * 6
         val k = Array(nDof) { DoubleArray(nDof) }
@@ -295,23 +342,27 @@ object FrameSolver {
         val data = HashMap<Int, MemberData>()
         for (m in model.members) {
             val ax = axes(model, m)
-            val klFull = localStiffness(m, ax.length, model.beamTheory)
-            val w = localUdl(model, m, ax)
-            val pts = localPointLoads(model, m, ax)
-            val feqFull = equivalentNodal(w, ax.length)
-            val (py, pz) = phi(m, ax.length, model.beamTheory)
-            for (p in pts) { val e = equivalentNodal(p, ax.length, py, pz); for (a in 0 until 12) feqFull[a] += e[a] }
-            val cond = endCondensation(m, klFull, feqFull)
-            data[m.id] = MemberData(ax, klFull, feqFull, cond, w, pts)
-            val kl = cond.k
-            val feq = cond.f
+            val lf = flexLength(m, ax.length)
+            val loads = memberLoads(model, m, ax)
+            val (feqFlex, fArm) = memberEquivalent(m, ax.length, loads, model.beamTheory)
+            val cond = endCondensation(m, localStiffness(m, lf, model.beamTheory), feqFlex)
+            val tOff = offsetTransform(m)
+            val kNode = tTkt(tOff, cond.k)
+            val fNode = tTf(tOff, cond.f).also { v -> for (q in 0 until 12) v[q] += fArm[q] }
+            data[m.id] = MemberData(ax, kNode, fNode, cond, tOff, loads)
 
             val r = rotation(ax)
-            val kg = globalStiffness(kl, r)
+            val kg = globalStiffness(kNode, r)
             val idx = dofs(m)
             for (a in 0 until 12) for (b in 0 until 12) k[idx[a]][idx[b]] += kg[a][b]
-            val fg = toGlobal12(r, feq)
+            val fg = toGlobal12(r, fNode)
             for (a in 0 until 12) f[idx[a]] += fg[a]
+        }
+        for (p in model.panels) {
+            val kp = Shell.globalStiffness(model, p)
+            val fp = Shell.loadVector(model, p)
+            val idx = IntArray(24) { (model.nodeIndex[p.nodes[it / 6]] ?: error("Panel ${p.id}: missing node")) * 6 + it % 6 }
+            for (a in 0 until 24) { f[idx[a]] += fp[a]; for (b in 0 until 24) k[idx[a]][idx[b]] += kp[a][b] }
         }
         for (nl in model.nodalLoads) {
             val base = (model.nodeIndex[nl.node] ?: error("Load on missing node ${nl.node}")) * 6
@@ -356,40 +407,41 @@ object FrameSolver {
         for ((idx, n) in model.nodes.withIndex()) nodeDisp[n.id] = DoubleArray(6) { u[idx * 6 + it] }
 
         val endForces = LinkedHashMap<Int, DoubleArray>()
-        val udl = LinkedHashMap<Int, Vec3>()
         val axesMap = LinkedHashMap<Int, MemberAxes>()
-        val localDisp = LinkedHashMap<Int, DoubleArray>()
-        val points = LinkedHashMap<Int, List<LocalPointLoad>>()
+        val nodeLocal = LinkedHashMap<Int, DoubleArray>()
+        val flexDisp = LinkedHashMap<Int, DoubleArray>()
+        val loadsMap = LinkedHashMap<Int, MemberLoads>()
+        val totalLoad = DoubleArray(3)
         for (m in model.members) {
             val d = data[m.id]!!
             val r = rotation(d.ax)
             val ug = DoubleArray(12).also { arr -> dofs(m).forEachIndexed { a, dof -> arr[a] = u[dof] } }
-            // member-end displacements (rotations at hinges / springs differ from the node rotation)
-            val ul = d.cond.recover(toLocal12(r, ug))
+            val ul = toLocal12(r, ug)
             endForces[m.id] = DoubleArray(12) { i ->
                 var s = 0.0
-                for (c in 0 until 12) s += d.klFull[i][c] * ul[c]
-                s - d.feqFull[i]
+                for (c in 0 until 12) s += d.kNode[i][c] * ul[c]
+                s - d.fNode[i]
             }
-            udl[m.id] = d.w
+            nodeLocal[m.id] = ul
+            flexDisp[m.id] = d.cond.recover(tf(d.tOff, ul))
             axesMap[m.id] = d.ax
-            localDisp[m.id] = ul
-            points[m.id] = d.points
-        }
-
-        val totalLoad = DoubleArray(3)
-        for (m in model.members) {
-            val ax = axesMap[m.id]!!
-            val g = ax.toGlobal(udl[m.id]!!) * ax.length
+            loadsMap[m.id] = d.loads
+            var tot = Vec3.ZERO
+            for (dl in d.loads.dist) gauss(dl.a, dl.b) { s, w -> tot += dl.at(s) * w }
+            for (p in d.loads.points) tot += p.f
+            val g = d.ax.toGlobal(tot)
             totalLoad[0] += g.x; totalLoad[1] += g.y; totalLoad[2] += g.z
-            for (p in points[m.id]!!) {
-                val pg = ax.toGlobal(p.f)
-                totalLoad[0] += pg.x; totalLoad[1] += pg.y; totalLoad[2] += pg.z
-            }
+        }
+        val panelResults = LinkedHashMap<Int, PanelResult>()
+        for (p in model.panels) {
+            val ug = DoubleArray(24) { u[model.nodeIndex[p.nodes[it / 6]]!! * 6 + it % 6] }
+            panelResults[p.id] = Shell.result(model, p, ug)
+            val rs = Shell.resultant(model, p)
+            totalLoad[0] += rs.x; totalLoad[1] += rs.y; totalLoad[2] += rs.z
         }
         for (nl in model.nodalLoads) for (a in 0 until 3) totalLoad[a] += nl.values[a]
 
-        return FrameResults(model, nodeDisp, reactions, endForces, udl, axesMap, localDisp, totalLoad, points)
+        return FrameResults(model, nodeDisp, reactions, endForces, axesMap, nodeLocal, flexDisp, totalLoad, loadsMap, panelResults)
     }
 
     /** In-place Cholesky solve of an SPD system. */
@@ -428,20 +480,41 @@ object FrameSolver {
     }
 }
 
+/** Linearly varying distributed load on [a, b] in local axes (kN/m); positions measured from node i. */
+data class LocalDistLoad(val a: Double, val b: Double, val w1: Vec3, val w2: Vec3) {
+    fun at(s: Double): Vec3 = if (b - a < 1e-12) w1 else w1 + (w2 - w1) * ((s - a) / (b - a))
+}
+
+class MemberLoads(val dist: List<LocalDistLoad>, val points: List<LocalPointLoad>)
+
+private val G4X = doubleArrayOf(-0.8611363115940526, -0.3399810435848563, 0.3399810435848563, 0.8611363115940526)
+private val G4W = doubleArrayOf(0.3478548451374538, 0.6521451548625461, 0.6521451548625461, 0.3478548451374538)
+
+/** 4-point Gauss–Legendre over [a, b]: calls f(s, weight). Exact for polynomials up to degree 7. */
+inline fun gauss(a: Double, b: Double, f: (Double, Double) -> Unit) {
+    if (b - a <= 0) return
+    val h = (b - a) / 2; val c = (a + b) / 2
+    for (k in 0 until 4) f(c + h * gaussX(k), h * gaussW(k))
+}
+
+fun gaussX(k: Int) = G4X[k]
+fun gaussW(k: Int) = G4W[k]
+
 class FrameResults(
     val model: FrameModel,
     /** Global displacements per node: ux, uy, uz (m), φx, φy, φz (rad). */
     val nodeDisplacements: Map<Int, DoubleArray>,
     /** Support reactions per node in global axes (kN, kN·m). */
     val reactions: Map<Int, DoubleArray>,
-    /** Local end forces acting ON the member, 12 values (i end then j end). */
+    /** Local end forces acting ON the member at its NODES (rigid arms included), 12 values (i end then j end). */
     val memberEndForces: Map<Int, DoubleArray>,
-    val memberUdl: Map<Int, Vec3>,
     val memberAxes: Map<Int, MemberAxes>,
-    private val memberLocalDisp: Map<Int, DoubleArray>,
+    private val memberNodeLocalDisp: Map<Int, DoubleArray>,
+    private val memberFlexDisp: Map<Int, DoubleArray>,
     /** Total applied load ΣFx, ΣFy, ΣFz (kN) including self-weight. */
     val totalLoad: DoubleArray,
-    val memberPointLoads: Map<Int, List<LocalPointLoad>> = emptyMap(),
+    val memberLoads: Map<Int, MemberLoads> = emptyMap(),
+    val panelResults: Map<Int, PanelResult> = emptyMap(),
 ) {
     /** ΣReactions + ΣLoads per global direction — should be ≈ 0 (equilibrium check, as in RFEM). */
     val equilibriumError: DoubleArray
@@ -451,86 +524,98 @@ class FrameResults(
             return DoubleArray(3) { r[it] + totalLoad[it] }
         }
 
-    /** Internal forces at [n] + 1 equally spaced stations, plus stations just either side of point loads. */
+    /**
+     * Internal forces at [n] + 1 equally spaced stations along the full member (node i → node j), plus
+     * stations either side of point loads, load-segment ends and rigid-offset faces. Exact by statics.
+     */
     fun internalForces(memberId: Int, n: Int = 20): List<Station> {
         val fe = memberEndForces[memberId] ?: error("No member $memberId")
-        val w = memberUdl[memberId]!!
         val l = memberAxes[memberId]!!.length
-        val pts = memberPointLoads[memberId].orEmpty()
-        val ss = ((0..n).map { l * it / n } + pts.flatMap { listOf(it.a - 1e-6, it.a + 1e-6) })
-            .filter { it in 0.0..l }.sorted()
+        val ld = memberLoads[memberId] ?: MemberLoads(emptyList(), emptyList())
+        val mem = model.members.first { it.id == memberId }
+        val extra = ld.points.flatMap { listOf(it.a - 1e-6, it.a + 1e-6) } +
+            ld.dist.flatMap { listOf(it.a, it.b) } + listOf(mem.offsetI, l - mem.offsetJ)
+        val ss = ((0..n).map { l * it / n } + extra).filter { it in 0.0..l }.sorted()
+            .fold(ArrayList<Double>()) { acc, v -> if (acc.isEmpty() || v - acc.last() > 1e-9) acc.add(v); acc }
+        val fi = Vec3(fe[0], fe[1], fe[2])
+        val mi = Vec3(fe[3], fe[4], fe[5])
         return ss.map { s ->
-            var px = 0.0; var py = 0.0; var pz = 0.0; var mPy = 0.0; var mPz = 0.0
-            for (p in pts) if (p.a < s) {
-                px += p.f.x; py += p.f.y; pz += p.f.z
-                mPy += p.f.y * (s - p.a); mPz += p.f.z * (s - p.a)
+            var force = fi
+            var mom = mi + (Vec3(-s, 0.0, 0.0) cross fi)
+            for (d in ld.dist) {
+                val hi = minOf(d.b, s)
+                gauss(d.a, hi) { t, w ->
+                    val q = d.at(t) * w
+                    force += q
+                    mom += Vec3(t - s, 0.0, 0.0) cross q
+                }
             }
-            Station(
-                s = s,
-                n = -(fe[0] + w.x * s + px),
-                vy = -(fe[1] + w.y * s + py),
-                vz = -(fe[2] + w.z * s + pz),
-                mt = -fe[3],
-                my = -(fe[4] + s * fe[2] + w.z * s * s / 2 + mPz),
-                mz = -fe[5] + s * fe[1] + w.y * s * s / 2 + mPy,
-            )
+            for (p in ld.points) if (p.a < s) { force += p.f; mom += Vec3(p.a - s, 0.0, 0.0) cross p.f }
+            Station(s, -force.x, -force.y, -force.z, -mom.x, -mom.y, -mom.z)
         }
     }
 
     /**
-     * Deformed shape of a member in global coordinates: Hermite interpolation of the member-end
-     * displacements plus the exact fixed-end deflection due to the member's own loads.
+     * Deformed shape of a member in global coordinates: rigid arms move with their node; the flexible
+     * part uses Hermite interpolation of its end displacements plus the exact fixed-end deflection due
+     * to its own loads (bending, and shear for Timoshenko) by integration of the point-load solution.
      */
     fun deformedShape(memberId: Int, scale: Double, n: Int = 16): List<Vec3> {
         val m = model.members.first { it.id == memberId }
         val ax = memberAxes[memberId]!!
-        val ul = memberLocalDisp[memberId]!!
-        val w = memberUdl[memberId]!!
-        val pts = memberPointLoads[memberId].orEmpty()
+        val un = memberNodeLocalDisp[memberId]!!
+        val uf = memberFlexDisp[memberId]!!
+        val ld = memberLoads[memberId] ?: MemberLoads(emptyList(), emptyList())
         val l = ax.length
+        val oi = m.offsetI; val oj = m.offsetJ
+        val lf = l - oi - oj
         val e = m.material.e
         val eiy = e * m.section.iy
         val eiz = e * m.section.iz
+        val tim = model.beamTheory == BeamTheory.TIMOSHENKO
+        val gay = m.material.g * m.section.asy
+        val gaz = m.material.g * m.section.asz
         val p0 = model.node(m.i).pos
+        fun green(x: Double, a: Double): Double {           // fixed–fixed bending deflection × EI / P
+            val b = lf - a
+            return if (x <= a) b * b * x * x * (3 * a * lf - 3 * a * x - b * x) / (6 * lf * lf * lf)
+            else { val xr = lf - x; a * a * xr * xr * (3 * b * lf - 3 * b * xr - a * xr) / (6 * lf * lf * lf) }
+        }
+        fun greenShear(x: Double, a: Double) = if (x <= a) (lf - a) / lf * x else a / lf * (lf - x)
         return (0..n).map { k ->
-            val xi = k.toDouble() / n
-            val s = xi * l
-            val n1 = 1 - 3 * xi * xi + 2 * xi * xi * xi
-            val n2 = l * (xi - 2 * xi * xi + xi * xi * xi)
-            val n3 = 3 * xi * xi - 2 * xi * xi * xi
-            val n4 = l * (-xi * xi + xi * xi * xi)
-            val bubble = s * s * (l - s) * (l - s) / 24.0
-            var v = n1 * ul[1] + n2 * ul[5] + n3 * ul[7] + n4 * ul[11] + w.y * bubble / eiz
-            var wz = n1 * ul[2] - n2 * ul[4] + n3 * ul[8] - n4 * ul[10] + w.z * bubble / eiy
-            for (p in pts) {
-                val g = fixedFixedPointDeflection(s, p.a, l)
-                v += p.f.y * g / eiz
-                wz += p.f.z * g / eiy
-            }
-            if (model.beamTheory == BeamTheory.TIMOSHENKO) {
-                // shear deflection of the fixed-ended member under its own loads (Timoshenko)
-                val g = m.material.g
-                val shearBubble = s * (l - s) / 2.0
-                if (m.section.asy > 0) v += w.y * shearBubble / (g * m.section.asy)
-                if (m.section.asz > 0) wz += w.z * shearBubble / (g * m.section.asz)
-                for (p in pts) {
-                    val lin = if (s <= p.a) (l - p.a) / l * s else p.a / l * (l - s)
-                    if (m.section.asy > 0) v += p.f.y * lin / (g * m.section.asy)
-                    if (m.section.asz > 0) wz += p.f.z * lin / (g * m.section.asz)
+            val s = l * k / n
+            val loc: Vec3 = when {
+                s < oi - 1e-12 -> Vec3(un[0], un[1] + s * un[5], un[2] - s * un[4])
+                s > l - oj + 1e-12 -> { val r = s - l; Vec3(un[6], un[7] + r * un[11], un[8] - r * un[10]) }
+                else -> {
+                    val x = (s - oi).coerceIn(0.0, lf)
+                    val xi = x / lf
+                    val n1 = 1 - 3 * xi * xi + 2 * xi * xi * xi
+                    val n2 = lf * (xi - 2 * xi * xi + xi * xi * xi)
+                    val n3 = 3 * xi * xi - 2 * xi * xi * xi
+                    val n4 = lf * (-xi * xi + xi * xi * xi)
+                    var v = n1 * uf[1] + n2 * uf[5] + n3 * uf[7] + n4 * uf[11]
+                    var w = n1 * uf[2] - n2 * uf[4] + n3 * uf[8] - n4 * uf[10]
+                    fun addPoint(f: Vec3, a: Double) {
+                        val g = green(x, a)
+                        v += f.y * g / eiz; w += f.z * g / eiy
+                        if (tim) {
+                            val gs = greenShear(x, a)
+                            if (gay > 0) v += f.y * gs / gay
+                            if (gaz > 0) w += f.z * gs / gaz
+                        }
+                    }
+                    for (d in ld.dist) {
+                        val a0 = maxOf(d.a, oi) - oi; val b0 = minOf(d.b, l - oj) - oi
+                        if (b0 <= a0) continue
+                        val cuts = listOf(a0, b0, x).filter { it in a0..b0 }.sorted()
+                        for (q in 1 until cuts.size) gauss(cuts[q - 1], cuts[q]) { t, wt -> addPoint(d.at(t + oi) * wt, t) }
+                    }
+                    for (p in ld.points) if (p.a in oi..(l - oj)) addPoint(p.f, p.a - oi)
+                    Vec3(uf[0] * (1 - xi) + uf[6] * xi, v, w)
                 }
             }
-            val u = ul[0] * (1 - xi) + ul[6] * xi
-            p0 + ax.x * s + ax.toGlobal(Vec3(u, v, wz)) * scale
-        }
-    }
-
-    /** Deflection × EI / P of a fixed–fixed beam under a point load P at a (Roark, Table 8.1 case 1d). */
-    private fun fixedFixedPointDeflection(x: Double, a: Double, l: Double): Double {
-        val b = l - a
-        return if (x <= a) b * b * x * x * (3 * a * l - 3 * a * x - b * x) / (6 * l * l * l)
-        else {
-            val xr = l - x
-            a * a * xr * xr * (3 * b * l - 3 * b * xr - a * xr) / (6 * l * l * l)
+            p0 + ax.x * s + ax.toGlobal(loc) * scale
         }
     }
 
@@ -539,10 +624,10 @@ class FrameResults(
             .let { (id, d) -> id to Vec3(d[0], d[1], d[2]).length }
 
     /** Largest member deflection relative to the chord (m), checked along every member. */
-    fun maxMemberDeflection(): Double = model.members.maxOf { m ->
+    fun maxMemberDeflection(): Double = model.members.maxOfOrNull { m ->
         val pts = deformedShape(m.id, 1.0, 20)
         val a = pts.first()
         val chord = pts.last() - a
         pts.withIndex().maxOf { (k, p) -> (p - (a + chord * (k / 20.0))).length }
-    }
+    } ?: 0.0
 }

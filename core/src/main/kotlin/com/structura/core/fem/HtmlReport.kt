@@ -86,6 +86,8 @@ object HtmlReport {
                 listOfNotNull(
                     m.endI?.let { k -> if (k == 0.0) "hinge i" else "spring i ${f(k, 0)} kN·m/rad" },
                     m.endJ?.let { k -> if (k == 0.0) "hinge j" else "spring j ${f(k, 0)} kN·m/rad" },
+                    if (m.offsetI > 0) "offset i ${f(m.offsetI, 3)} m" else null,
+                    if (m.offsetJ > 0) "offset j ${f(m.offsetJ, 3)} m" else null,
                 ).joinToString(", ").ifEmpty { "rigid" },
             )
         })
@@ -99,15 +101,26 @@ object HtmlReport {
             })
         }
         if (model.memberLoads.isNotEmpty()) {
-            append("<b>Uniform member loads</b>")
-            table(listOf("Case", "Member", "Direction", "w (kN/m)"), model.memberLoads.map {
-                listOf(it.case, "M${it.member}", it.dir.name.lowercase().replace('_', ' '), f(it.w))
+            append("<b>Distributed member loads</b>")
+            table(listOf("Case", "Member", "Direction", "w at start (kN/m)", "w at end (kN/m)", "from a (m)", "to b (m)"), model.memberLoads.map {
+                listOf(it.case, "M${it.member}", it.dir.name.lowercase().replace('_', ' '), f(it.w), f(it.w2 ?: it.w),
+                    it.a?.let { v -> f(v, 3) } ?: "0", it.b?.let { v -> f(v, 3) } ?: "L")
             })
         }
         if (model.pointLoads.isNotEmpty()) {
             append("<b>Concentrated member loads</b>")
             table(listOf("Case", "Member", "Direction", "P (kN)", "a from i (m)"), model.pointLoads.map {
                 listOf(it.case, "M${it.member}", it.dir.name.lowercase().replace('_', ' '), f(it.p), f(it.a, 3))
+            })
+        }
+
+        if (model.panels.isNotEmpty()) {
+            append("<h2>4a. Surface panels (Q4 flat shell)</h2>")
+            append("<p class=\"meta\">Membrane + Reissner–Mindlin plate, 2×2 integration with 1-point transverse shear and t²/h² stabilisation. ")
+            append("One element per panel — refine with Panel mesh. Results at the centroid in panel axes.</p>")
+            table(listOf("Panel", "Nodes", "t (mm)", "E (MPa)", "G (MPa)", "ν", "γ (kN/m³)", "Pressure (kN/m²)", "Case"), model.panels.map {
+                listOf("P${it.id}", it.nodes.joinToString("-") { n -> "N$n" }, f(it.t * 1000, 0), f(it.e / 1000, 0), f(it.g / 1000, 0),
+                    f(it.nu, 2), f(it.gamma, 1), f(it.pressure), it.case)
             })
         }
 
@@ -133,6 +146,14 @@ object HtmlReport {
             table(listOf("Node", "ux (mm)", "uy (mm)", "uz (mm)", "φx (mrad)", "φy (mrad)", "φz (mrad)"), r.nodeDisplacements.map { (n, v) ->
                 listOf("N$n") + v.map { f(it * 1000, 3) }
             })
+            if (r.panelResults.isNotEmpty()) {
+                append("<b>Panel results (centroid)</b>")
+                table(listOf("Panel", "Area (m²)", "Mean normal defl. (mm)", "Nx", "Ny", "Nxy (kN/m)", "Mx", "My", "Mxy (kN·m/m)", "Max face stress (MPa)"),
+                    r.panelResults.values.map {
+                        listOf("P${it.id}", f(it.area, 3), f(it.meanNormalDeflection * 1000, 3), f(it.nx), f(it.ny), f(it.nxy),
+                            f(it.mx), f(it.my), f(it.mxy), f(it.maxFaceStress, 3))
+                    })
+            }
             append("<b>Member end forces (local axes; N tension +, sagging My +)</b>")
             table(listOf("Member", "x (m)", "N (kN)", "Vy (kN)", "Vz (kN)", "Mt (kN·m)", "My (kN·m)", "Mz (kN·m)"), model.members.flatMap { m ->
                 val st = r.internalForces(m.id, 2)
@@ -191,6 +212,10 @@ object HtmlReport {
         val oy = h / 2.0 + (minY + maxY) / 2 * s
         fun xy(p: Vec3): String { val (a, b) = proj(p); return String.format(Locale.US, "%.1f,%.1f", ox + a * s, oy - b * s) }
         val sb = StringBuilder("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 $w $h\" font-family=\"Georgia,serif\" font-size=\"11\">")
+        for (p in model.panels) {
+            val poly = p.nodes.joinToString(" ") { xy(model.node(it).pos) }
+            sb.append("<polygon points=\"$poly\" fill=\"#ddd\" fill-opacity=\"0.5\" stroke=\"#999\" stroke-width=\"0.8\"/>")
+        }
         for (m in model.members) {
             val a = model.node(m.i).pos; val b = model.node(m.j).pos
             sb.append("<line x1=\"${xy(a).substringBefore(',')}\" y1=\"${xy(a).substringAfter(',')}\" x2=\"${xy(b).substringBefore(',')}\" y2=\"${xy(b).substringAfter(',')}\" stroke=\"#666\" stroke-width=\"1.5\"/>")
