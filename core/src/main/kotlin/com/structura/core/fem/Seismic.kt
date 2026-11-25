@@ -208,7 +208,7 @@ object Seismic {
      * Seismic design envelope per member: IS 1893 Cl. 6.3.1.2 combinations
      * 1.5(DL+LL), 1.2(DL+LL±EL), 1.5(DL±EL), 0.9DL±1.5EL with EL from X and Y separately.
      */
-    fun envelope(model: FrameModel, res: Result, stations: Int = 20): List<MemberEnvelope> {
+    fun envelope(model: FrameModel, res: Result, stations: Int = 40): List<MemberEnvelope> {
         val grav = listOf(
             LoadCombination("1.5(DL+LL)", mapOf(LoadCase.DL to 1.5, LoadCase.LL to 1.5)) to 0.0,
             LoadCombination("1.2(DL+LL)", mapOf(LoadCase.DL to 1.2, LoadCase.LL to 1.2)) to 1.2,

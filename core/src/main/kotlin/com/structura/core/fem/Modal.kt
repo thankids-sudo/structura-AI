@@ -101,6 +101,11 @@ object Modal {
         val n = free.size
         val kr = Array(n) { r -> DoubleArray(n) { c -> k[free[r]][free[c]] } }
         val mr = Array(n) { r -> DoubleArray(n) { c -> m[free[r]][free[c]] } }
+        // tiny mass on every free DOF so massless DOFs (e.g. rotations with lumped masses only) become
+        // very high, non-participating modes instead of making the reduced mass matrix singular
+        val maxM = (0 until n).maxOfOrNull { mr[it][it] } ?: 0.0
+        if (maxM <= 0) throw UnstableModelException("No mass in the model — switch on self-weight or add gravity loads.")
+        for (i in 0 until n) mr[i][i] += 1e-9 * maxM
         val lk = cholesky(Array(n) { kr[it].copyOf() }) ?: throw UnstableModelException("Model is unstable — fix supports before modal analysis.")
 
         val p = minOf(n, maxOf(2 * nModes, nModes + 8))
@@ -119,7 +124,7 @@ object Modal {
             }
             // reduced matrices
             val ky = proj(kr, y); val my = proj(mr, y)
-            val (ev, qv) = generalizedEigen(ky, my) ?: break
+            val (ev, qv) = generalizedEigen(ky, my) ?: if (iter == 0) throw IllegalStateException("Modal analysis failed to start (singular mass)") else break
             val newX = Array(n) { r -> DoubleArray(p) { c -> var s = 0.0; for (t in 0 until p) s += y[r][t] * qv[t][c]; s } }
             val conv = (0 until q).all { abs(ev[it] - lambdas[it]) <= 1e-8 * abs(ev[it]) }
             lambdas = ev; x = newX; vecs = newX
