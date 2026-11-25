@@ -155,6 +155,9 @@ Superstructure only (no foundations, masonry, finishes); steel by allowance unti
 - **Inclined supports:** node editor → "Incline about Y (°)": restraints and springs act along the rotated axes; reactions are reported in global axes.
 - **Benchmarks:** B1 pitched portal, B2 Fink, B3 Pratt, B4 3-storey building — CI tests `Cee330lBenchmarksTest` and Studio templates.
 
+## Home — Workbench (UCS space)
+`ui/home/WorkbenchHome.kt` (design option C, canvas "Structura AI — UCS hub home screen options"). The project currently open (`DesignSession.currentModel`, kept in step with 3D Studio; a 3-storey sample at first start) is drawn live in a dark UCS space with view presets 3D / XY / XZ / YZ. Phases are docked around it: **Design** rail (01 RCC, 02 Steel) on the left, **Model** rail (03 FEM, 04 Plan, 05 STAAD) on the right; each opens a sheet of its tools. The bottom bar runs **Analyse** (all IS 456 / IS 1893 combinations, static check, IS 800 η colouring of steel members), **AI review**, **Design** and **Report** (HTML) on the model in place; the status strip shows the residuals and the AI verdict. Units chip switches m·kN / ft·kip.
+
 ## FEM analysis (RFEM-style 3D frame)
 
 - 6 DOF per node, Euler–Bernoulli members, rigid joints, linear static, direct stiffness method, Cholesky solver.
