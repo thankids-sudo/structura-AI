@@ -56,7 +56,7 @@ object Benchmarks {
         val yMax = m.nodes.maxOf { it.y }
         val edge = m.members.filter { mm ->
             val a = m.node(mm.i); val b = m.node(mm.j)
-            a.z > 0.1 && b.z > 0.1 && kotlin.math.abs(a.y - yMax) < 1e-6 && kotlin.math.abs(b.y - yMax) < 1e-6
+            a.z > 0.1 && kotlin.math.abs(a.z - b.z) < 1e-6 && kotlin.math.abs(a.y - yMax) < 1e-6 && kotlin.math.abs(b.y - yMax) < 1e-6
         }.map { it.id }.toSet()
         m = Builders.translationalRepeat(m, edge, dir = Vec3.Y, spacings = listOf(1.5), link = true, linkSection = beam, linkMaterial = mat)
         val levels = m.nodes.map { it.z }.filter { it > 0.1 }.distinct().sorted()

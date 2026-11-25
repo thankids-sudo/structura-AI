@@ -162,6 +162,8 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
     var eqBuilding by remember { mutableStateOf(Seismic.BuildingType.RC_MRF) }
     var seismicEnv by remember { mutableStateOf(false) }
     var steel by remember { mutableStateOf<List<SteelModelCheck.MemberCheck>>(emptyList()) }
+    var panelOpen by remember { mutableStateOf(0) }   // 0 none, 1 benchmarks, 2 repeat, 3 lateral
+    var showStatic by remember { mutableStateOf(false) }
     var aiReview by remember { mutableStateOf<com.structura.core.fem.ResultCheck.Review?>(null) }
     var showUtil by remember { mutableStateOf(true) }
     var steelK by remember { mutableStateOf(1.0) }
@@ -442,6 +444,9 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                     ); camera.iso()
                 }, label = { Text("Portal") })
                 AssistChip(onClick = onWizard, label = { Text("Templates…") })
+                AssistChip(onClick = { panelOpen = if (panelOpen == 1) 0 else 1 }, label = { Text("Benchmarks / trusses") })
+                AssistChip(onClick = { panelOpen = if (panelOpen == 2) 0 else 2 }, label = { Text("⇉ Repeat") })
+                AssistChip(onClick = { panelOpen = if (panelOpen == 3) 0 else 3 }, label = { Text("≋ IS 1893 / wind") })
                 AssistChip(onClick = onStandards, label = { Text("🇮🇳 Indian Standards") })
                 AssistChip(onClick = { saveLauncher.launch("${model.title.replace(' ', '_')}.structura.json") }, label = { Text("↓ Save project") })
                 AssistChip(onClick = { openLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }, label = { Text("↑ Open project") })
@@ -479,6 +484,11 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 }, label = { Text("↓ HTML report") })
             }
 
+            when (panelOpen) {
+                1 -> BenchmarkPanel { m, name -> commit(m, "$name loaded"); camera.front(); panelOpen = 0 }
+                2 -> RepeatPanel(model, selMember) { m, msg -> commit(m, msg) }
+                3 -> LateralPanel(model) { m, msg -> commit(m, msg) }
+            }
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(false, { camera.iso() }, { Text("◇ 3D") })
                 FilterChip(false, { camera.top(); plane = Plane.XY }, { Text("Top XY") })
@@ -589,6 +599,8 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
             // selection editors
             selNode?.takeIf { tool == Tool.SELECT && model.nodeIndex.containsKey(it) }?.let { id ->
                 NodeEditor(model, id, onApply = { m, msg -> commit(m, msg) }, onClose = { selNode = null })
+                NodeInspector(results, id)
+                SupportExtras(model, id) { m, msg -> commit(m, msg) }
             }
             selMember?.takeIf { tool == Tool.SELECT && model.members.any { m -> m.id == it } }?.let { id ->
                 MemberEditor(model, id, onApply = { m, msg -> commit(m, msg) }, onClose = { selMember = null })
@@ -610,6 +622,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 BeamTheory.entries.forEach { t ->
                     FilterChip(t == model.beamTheory, { if (t != model.beamTheory) commit(model.copy(beamTheory = t), "Beam theory: ${t.label}") }, { Text(t.label) })
                 }
+                FilterChip(model.planeXZ, { commit(model.copy(planeXZ = !model.planeXZ), if (model.planeXZ) "3D space frame" else "2D plane frame (XZ): uy, φx, φz held") }, { Text("2D plane XZ") })
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { analyse() }, enabled = !busy, modifier = Modifier.weight(1f)) { Text("▶ Analyse") }
@@ -670,6 +683,14 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 }
             }
             results?.let { r ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val fe = r.equilibriumError.maxOf { kotlin.math.abs(it) }; val me = r.momentEquilibriumError.maxOf { kotlin.math.abs(it) }
+                    Text("Static check: ΣF residual ${"%.1e".format(fe)} kN, ΣM ${"%.1e".format(me)} kN·m" +
+                        if (r.inactiveMembers.isNotEmpty()) " · tension-only off: ${r.inactiveMembers.joinToString { "M$it" }}" else "",
+                        style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                    FilterChip(showStatic, { showStatic = !showStatic }, { Text("Σ table") })
+                }
+                if (showStatic) Text(r.staticCheck(), fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, style = MaterialTheme.typography.labelSmall)
                 if (r.panelResults.isNotEmpty()) {
                     val pmax = r.panelResults.values.maxByOrNull { kotlin.math.abs(it.meanNormalDeflection) }!!
                     val smax = r.panelResults.values.maxByOrNull { it.maxFaceStress }!!
@@ -749,6 +770,24 @@ private fun MemberEditor(model: FrameModel, id: Int, onApply: (FrameModel, Strin
                 Text("  Hinge i   ", style = MaterialTheme.typography.bodySmall)
                 Switch(m.hingeJ, { v -> onApply(ModelEditor.updateMember(model, id) { it.copy(hingeJ = v) }, "M$id hinge at j: $v") })
                 Text("  Hinge j", style = MaterialTheme.typography.bodySmall)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(m.truss, { v -> onApply(ModelEditor.updateMember(model, id) { it.copy(truss = v) }, "M$id truss: $v") })
+                Text("  Truss (axial only)   ", style = MaterialTheme.typography.bodySmall)
+                Switch(m.tensionOnly, { v -> onApply(ModelEditor.updateMember(model, id) { it.copy(tensionOnly = v) }, "M$id tension-only: $v") })
+                Text("  Tension only", style = MaterialTheme.typography.bodySmall)
+            }
+            var pmA by remember(id) { mutableStateOf(fmt(len / 2)) }
+            var pmM by remember(id) { mutableStateOf("10") }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Num("Moment at a (m)", pmA, Modifier.weight(1f)) { pmA = it }
+                Num("M about global Y (kN·m)", pmM, Modifier.weight(1f)) { pmM = it }
+                OutlinedButton(onClick = {
+                    val a = pmA.replace(',', '.').toDoubleOrNull() ?: return@OutlinedButton
+                    val mm = pmM.replace(',', '.').toDoubleOrNull() ?: return@OutlinedButton
+                    runCatching { com.structura.core.fem.Builders.memberMoment(model, id, a.coerceIn(0.0, len), 1, mm, LoadCase.LL) }
+                        .onSuccess { onApply(it, "Point moment ${fmt(mm)} kN·m on M$id at ${fmt(a)} m (LL)") }
+                }) { Text("+ Moment") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Num("Spring i (kN·m/rad)", ki, Modifier.weight(1f)) { ki = it }
