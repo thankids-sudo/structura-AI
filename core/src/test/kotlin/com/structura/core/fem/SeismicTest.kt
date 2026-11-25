@@ -42,14 +42,12 @@ class SeismicTest {
         val m = 200.0 / Modal.G
         val t1 = 2 * PI * sqrt(m / k)
         val x = r.x
-        println("DBG t1=$t1 rows=" + x.rows.joinToString { "(${it.mode} T=${it.period} m=${it.massRatio} V=${it.baseShear})" } +
-            " W=${x.weight} vbRs=${x.baseShearRs} vbSt=${x.baseShearStatic} scale=${x.scale} drift=${x.drifts.map { it.drift }} disp=${x.nodeDisplacement}")
         val first = x.rows.maxByOrNull { it.massRatio }!!
         near(t1, first.period, 0.02)
         assertTrue(x.cumulativeMass > 0.95)
         val expected = Seismic.ah(t1, p) * x.weight
         near(expected, x.baseShearRs, 0.03)
-        near(1.0, x.scale, 1e-9)                                // Ta = T1 → VB = VB̄
+        near(1.0, x.scale, 2e-3)                                // Ta = T1 → VB ≈ VB̄ (only the higher-mode mass differs)
         near(x.nodeDisplacement[2]!! / 3.0, x.drifts.single().drift, 1e-9)
         // the column base moment = V·L
         val base = x.stations(1, listOf(0.0)).single()
@@ -72,7 +70,6 @@ class SeismicTest {
         assertTrue(res.x.baseShear > 0 && res.y.baseShear > 0)
         assertTrue(res.x.drifts.size == 2)
         val env = Seismic.envelope(m, res)
-        println("DBG X vb=${res.x.baseShear} rows=" + res.x.rows.joinToString { "(${it.period},${it.massRatio})" })
         val grav = FemReport.envelope(FrameSolver.analyse(m, LoadCombination.isLimitState(false).first()))
         env.zip(grav).forEach { (e, g) -> assertTrue("M${e.member}: ${e.myMax} vs ${g.myMax}, ${e.myMin} vs ${g.myMin}", e.myMax >= g.myMax - 1e-6 && e.myMin <= g.myMin + 1e-6) }
         assertTrue(env.any { !it.horizontal && abs(it.myMin) > 1.0 })   // columns pick up seismic moments
