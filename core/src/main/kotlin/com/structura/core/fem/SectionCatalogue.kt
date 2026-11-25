@@ -6,6 +6,7 @@ package com.structura.core.fem
  * Verify sizes and properties against the current IS 4923 / IS 1161 edition or the
  * manufacturer's catalogue before use.
  */
+/** Tubes (IS 4923 / IS 1161), angles (IS 808 ISA, JIS G 3192 — nominal dimensions, sharp corners), GFRP tubes. */
 object SectionCatalogue {
 
     data class Entry(val family: String, val section: Section)
@@ -13,6 +14,9 @@ object SectionCatalogue {
     private fun shs(b: Double, t: Double) = Entry("Steel SHS (IS 4923)", Section.rhs(b / 1000, b / 1000, t / 1000))
     private fun rhs(h: Double, b: Double, t: Double) = Entry("Steel RHS (IS 4923)", Section.rhs(b / 1000, h / 1000, t / 1000))
     private fun chs(d: Double, t: Double) = Entry("Steel CHS (IS 1161)", Section.chs(d / 1000, t / 1000))
+    private fun isa(b: Double, t: Double) = Entry("Steel angle ISA (IS 808)", Section.angle(b / 1000, b / 1000, t / 1000, "ISA ${b.toInt()}×${b.toInt()}×${t.toInt()}"))
+    private fun isaU(b: Double, d: Double, t: Double) = Entry("Steel angle ISA (IS 808)", Section.angle(b / 1000, d / 1000, t / 1000, "ISA ${d.toInt()}×${b.toInt()}×${t.toInt()}"))
+    private fun jis(b: Double, t: Double) = Entry("Steel angle JIS G 3192", Section.angle(b / 1000, b / 1000, t / 1000, "L ${b.toInt()}×${b.toInt()}×${t.toInt()}"))
     private fun frpSq(b: Double, t: Double) = Entry("GFRP square tube (typical)", Section.rhs(b / 1000, b / 1000, t / 1000, "GFRP □${b.toInt()}×${t}"))
     private fun frpRect(h: Double, b: Double, t: Double) = Entry("GFRP rect. tube (typical)", Section.rhs(b / 1000, h / 1000, t / 1000, "GFRP ▭${h.toInt()}×${b.toInt()}×$t"))
     private fun frpRound(d: Double, t: Double) = Entry("GFRP round tube (typical)", Section.chs(d / 1000, t / 1000, "GFRP ○${d.toInt()}×$t"))
@@ -27,6 +31,10 @@ object SectionCatalogue {
         chs(114.3, 4.5), chs(139.7, 4.8), chs(165.1, 4.8), chs(168.3, 6.3),
         frpSq(50.0, 5.0), frpSq(75.0, 6.0), frpSq(100.0, 6.0), frpSq(100.0, 8.0), frpSq(150.0, 9.5),
         frpRect(100.0, 50.0, 5.0), frpRect(150.0, 75.0, 6.0), frpRect(200.0, 100.0, 8.0),
+        isa(50.0, 5.0), isa(50.0, 6.0), isa(60.0, 6.0), isa(65.0, 6.0), isa(65.0, 8.0), isa(75.0, 6.0), isa(75.0, 8.0),
+        isa(90.0, 8.0), isa(90.0, 10.0), isa(100.0, 8.0), isa(100.0, 10.0), isa(100.0, 12.0),
+        isaU(50.0, 75.0, 6.0), isaU(65.0, 100.0, 8.0),
+        jis(40.0, 3.0), jis(50.0, 4.0), jis(60.0, 4.0), jis(60.0, 5.0), jis(65.0, 6.0), jis(75.0, 6.0),
         frpRound(50.0, 5.0), frpRound(76.0, 6.0), frpRound(100.0, 6.0), frpRound(150.0, 8.0),
     )
 

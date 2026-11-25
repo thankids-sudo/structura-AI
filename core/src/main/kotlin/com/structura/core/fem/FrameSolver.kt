@@ -117,7 +117,8 @@ object FrameSolver {
     }
 
     fun releasedDofs(m: Member): IntArray =
-        (if (m.endI != null) intArrayOf(4, 5) else intArrayOf()) + (if (m.endJ != null) intArrayOf(10, 11) else intArrayOf())
+        if (m.truss) intArrayOf(4, 5, 9, 10, 11)
+        else (if (m.endI != null) intArrayOf(4, 5) else intArrayOf()) + (if (m.endJ != null) intArrayOf(10, 11) else intArrayOf())
 
     /**
      * Member with end hinges / rotational springs, by static condensation of internal member-end
@@ -130,7 +131,7 @@ object FrameSolver {
     fun endCondensation(m: Member, kl: Array<DoubleArray>, feq: DoubleArray): EndCondensation {
         val rel = releasedDofs(m)
         if (rel.isEmpty()) return EndCondensation(kl, feq) { it }
-        val springs = rel.map { if (it < 6) m.endI!! else m.endJ!! }
+        val springs = rel.map { if (m.truss) 0.0 else if (it < 6) m.endI!! else m.endJ!! }
         val r = rel.size
         val n = 12 + r
         val map = IntArray(12) { c -> val k2 = rel.indexOf(c); if (k2 >= 0) 12 + k2 else c }
@@ -325,8 +326,35 @@ object FrameSolver {
     fun analyseAll(model: FrameModel, combinations: List<LoadCombination>): List<Pair<LoadCombination, FrameResults>> =
         combinations.map { it to analyse(model, it) }
 
-    /** Analyse the model with every load × 1.0. */
+    /**
+     * Analyse the model with every load × 1.0. Tension-only members are handled iteratively: a member found in
+     * compression is switched off (stiffness × 10⁻⁹) and the model re-solved; a switched-off member that would
+     * lengthen is switched back on (max 30 cycles).
+     */
     fun analyse(model: FrameModel): FrameResults {
+        if (model.members.none { it.tensionOnly }) return analyseLinear(model)
+        var off = emptySet<Int>()
+        repeat(30) {
+            val trial = model.copy(members = model.members.map { m ->
+                if (m.id in off) m.copy(section = m.section.copy(a = m.section.a * 1e-9, iy = m.section.iy * 1e-9, iz = m.section.iz * 1e-9, j = m.section.j * 1e-9)) else m
+            })
+            val r = analyseLinear(trial)
+            val next = HashSet<Int>()
+            for (m in model.members.filter { it.tensionOnly }) {
+                if (m.id in off) {
+                    val e = (model.node(m.j).pos - model.node(m.i).pos).unit()
+                    val di = r.nodeDisplacements[m.i]!!; val dj = r.nodeDisplacements[m.j]!!
+                    val elong = (dj[0] - di[0]) * e.x + (dj[1] - di[1]) * e.y + (dj[2] - di[2]) * e.z
+                    if (elong <= 1e-12) next += m.id
+                } else if (r.internalForces(m.id, 2).minOf { it.n } < -1e-6) next += m.id
+            }
+            if (next == off) return r.withInactive(off)
+            off = next
+        }
+        throw IllegalStateException("Tension-only iteration did not converge — check bracing layout")
+    }
+
+    private fun analyseLinear(model: FrameModel): FrameResults {
         require(model.members.isNotEmpty() || model.panels.isNotEmpty()) { "Model has no members or panels" }
         require(model.supports.isNotEmpty()) { "Model has no supports" }
         val nDof = model.nodes.size * 6
@@ -369,11 +397,26 @@ object FrameSolver {
             for (a in 0 until 6) f[base + a] += nl.values[a]
         }
 
+        // applied moment about the origin (for the 6-component static check)
+        val totalMoment = DoubleArray(3)
+        for ((idx, n) in model.nodes.withIndex()) {
+            val b = idx * 6
+            totalMoment[0] += n.y * f[b + 2] - n.z * f[b + 1] + f[b + 3]
+            totalMoment[1] += n.z * f[b] - n.x * f[b + 2] + f[b + 4]
+            totalMoment[2] += n.x * f[b + 1] - n.y * f[b] + f[b + 5]
+        }
+
         val fixed = BooleanArray(nDof)
         for (s in model.supports) {
             val base = (model.nodeIndex[s.node] ?: error("Support on missing node ${s.node}")) * 6
             for (a in 0 until 6) if (s.restraints[a]) fixed[base + a] = true
+            s.springs?.let { ks -> for (a in 0 until 6) if (!s.restraints[a] && ks[a] > 0) k[base + a][base + a] += ks[a] }
         }
+        // 2D plane frame: out-of-plane DOFs held (not reported as reactions)
+        if (model.planeXZ) for (i in model.nodes.indices) { fixed[i * 6 + 1] = true; fixed[i * 6 + 3] = true; fixed[i * 6 + 5] = true }
+        // rotations without stiffness (nodes joined only by truss / hinged members) are held, as in STAAD
+        val maxDiag = (0 until nDof).maxOfOrNull { abs(k[it][it]) } ?: 1.0
+        for (d in 0 until nDof) if (d % 6 >= 3 && !fixed[d] && abs(k[d][d]) <= 1e-12 * maxDiag && abs(f[d]) < 1e-12) fixed[d] = true
         val free = (0 until nDof).filter { !fixed[it] }.toIntArray()
         val nf = free.size
 
@@ -394,7 +437,11 @@ object FrameSolver {
             val base = model.nodeIndex[s.node]!! * 6
             val rr = DoubleArray(6)
             for (a in 0 until 6) {
-                if (!s.restraints[a]) continue
+                if (!s.restraints[a]) {
+                    val ks = s.springs?.getOrNull(a) ?: 0.0
+                    if (ks > 0) rr[a] = -ks * u[base + a]
+                    continue
+                }
                 var sum = 0.0
                 val row = k[base + a]
                 for (c in 0 until nDof) sum += row[c] * u[c]
@@ -441,7 +488,7 @@ object FrameSolver {
         }
         for (nl in model.nodalLoads) for (a in 0 until 3) totalLoad[a] += nl.values[a]
 
-        return FrameResults(model, nodeDisp, reactions, endForces, axesMap, nodeLocal, flexDisp, totalLoad, loadsMap, panelResults)
+        return FrameResults(model, nodeDisp, reactions, endForces, axesMap, nodeLocal, flexDisp, totalLoad, loadsMap, panelResults, totalMoment)
     }
 
     /** In-place Cholesky solve of an SPD system. */
@@ -515,7 +562,45 @@ class FrameResults(
     val totalLoad: DoubleArray,
     val memberLoads: Map<Int, MemberLoads> = emptyMap(),
     val panelResults: Map<Int, PanelResult> = emptyMap(),
+    /** Total applied moment about the global origin ΣMx, ΣMy, ΣMz (kN·m). */
+    val totalMoment: DoubleArray = DoubleArray(3),
+    /** Tension-only members switched off in the final iteration. */
+    val inactiveMembers: Set<Int> = emptySet(),
 ) {
+    internal fun withInactive(off: Set<Int>) = FrameResults(model, nodeDisplacements, reactions, memberEndForces, memberAxes,
+        memberNodeLocalDisp, memberFlexDisp, totalLoad, memberLoads, panelResults, totalMoment, off)
+
+    /** Σ(r × R + M_R) + ΣM_applied about the origin — should be ≈ 0. */
+    val momentEquilibriumError: DoubleArray
+        get() {
+            val m = totalMoment.copyOf()
+            for ((n, r) in reactions) {
+                val p = model.node(n)
+                m[0] += p.y * r[2] - p.z * r[1] + r[3]
+                m[1] += p.z * r[0] - p.x * r[2] + r[4]
+                m[2] += p.x * r[1] - p.y * r[0] + r[5]
+            }
+            return m
+        }
+
+    /** STAAD-style STATIC CHECK: applied loads, reactions and residuals for all six components. */
+    fun staticCheck(): String = buildString {
+        val ff = equilibriumError; val mm = momentEquilibriumError
+        val rf = DoubleArray(3); val rm = DoubleArray(3)
+        for ((n, r) in reactions) {
+            val p = model.node(n)
+            for (a in 0 until 3) rf[a] += r[a]
+            rm[0] += p.y * r[2] - p.z * r[1] + r[3]; rm[1] += p.z * r[0] - p.x * r[2] + r[4]; rm[2] += p.x * r[1] - p.y * r[0] + r[5]
+        }
+        appendLine("STATIC CHECK (about origin)        X            Y            Z")
+        appendLine(String.format(java.util.Locale.US, "Applied force (kN)     %12.4f %12.4f %12.4f", totalLoad[0], totalLoad[1], totalLoad[2]))
+        appendLine(String.format(java.util.Locale.US, "Reaction force (kN)    %12.4f %12.4f %12.4f", rf[0], rf[1], rf[2]))
+        appendLine(String.format(java.util.Locale.US, "Residual force         %12.3e %12.3e %12.3e", ff[0], ff[1], ff[2]))
+        appendLine(String.format(java.util.Locale.US, "Applied moment (kN·m)  %12.4f %12.4f %12.4f", totalMoment[0], totalMoment[1], totalMoment[2]))
+        appendLine(String.format(java.util.Locale.US, "Reaction moment (kN·m) %12.4f %12.4f %12.4f", rm[0], rm[1], rm[2]))
+        appendLine(String.format(java.util.Locale.US, "Residual moment        %12.3e %12.3e %12.3e", mm[0], mm[1], mm[2]))
+    }
+
     /** ΣReactions + ΣLoads per global direction — should be ≈ 0 (equilibrium check, as in RFEM). */
     val equilibriumError: DoubleArray
         get() {

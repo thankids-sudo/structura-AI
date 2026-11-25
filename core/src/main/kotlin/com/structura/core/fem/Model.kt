@@ -59,6 +59,15 @@ data class Material(val name: String, val e: Double, val g: Double, val gamma: D
          */
         fun gfrp() = Material("GFRP (illustrative)", 23.0e6, 3.5e6, 19.0)
 
+        /**
+         * Concrete to ACI 318-19 Cl. 19.2.2: Ec = 4700·√f'c MPa (normal weight), or, with the unit weight [wc] in
+         * kg/m³ (1440–2560), Ec = wc^1.5 · 0.043 · √f'c MPa. ν = 0.2.
+         */
+        fun concreteAci(fc: Double, wc: Double? = null): Material {
+            val e = (if (wc == null) 4700.0 * sqrt(fc) else wc.pow(1.5) * 0.043 * sqrt(fc)) * 1000.0
+            return Material("f'c ${"%.1f".format(java.util.Locale.US, fc)} (ACI)", e, e / 2.4, (wc ?: 2400.0) * 9.80665 / 1000 + 1.0)
+        }
+
         /** User-defined material from MPa and kN/m³. */
         fun custom(name: String, eMpa: Double, gMpa: Double, gamma: Double) = Material(name, eMpa * 1000, gMpa * 1000, gamma)
     }
@@ -77,6 +86,8 @@ data class Section(
     /** RECT, CHS, SHS, RHS, I, CHANNEL or GENERAL; [t] = wall / flange thickness (m), [tw] = web thickness (m) for I and channels. */
     val shape: String = "GENERAL", val t: Double = 0.0,
     val tw: Double = 0.0,
+    /** Warping constant Iω (m⁶) — reported for design; the 12-DOF kernel uses St Venant torsion only. */
+    val iw: Double = 0.0,
 ) {
     val isSolidRectangle: Boolean get() = shape == "RECT"
 
@@ -111,6 +122,74 @@ data class Section(
             return if (abs(x - Math.round(x)) < 1e-6) Math.round(x).toString() else String.format(java.util.Locale.US, "%.1f", x)
         }
 
+        /** Solid circle of diameter [d] (m): J = 2I, shear area 0.9 A. */
+        fun circle(d: Double, name: String = "Ø ${mm(d)}"): Section {
+            val a = Math.PI * d * d / 4; val i = Math.PI * d.pow(4) / 64
+            return Section(name, a, i, i, 2 * i, d, d, 0.9 * a, 0.9 * a, "CIRCLE")
+        }
+
+        /** Doubly symmetric I: depth [h] along local z, flange [bf] × [tf], web [tw] (m). Iω = Iz·h0²/4. */
+        fun iBeam(h: Double, bf: Double, tf: Double, tw: Double, name: String = "I ${mm(h)}×${mm(bf)}"): Section {
+            val hw = h - 2 * tf
+            val a = 2 * bf * tf + hw * tw
+            val iy = (bf * h.pow(3) - (bf - tw) * hw.pow(3)) / 12
+            val iz = (2 * tf * bf.pow(3) + hw * tw.pow(3)) / 12
+            val jt = (2 * bf * tf.pow(3) + (h - tf) * tw.pow(3)) / 3
+            val h0 = h - tf
+            return Section(name, a, iy, iz, jt, bf, h, 5.0 / 6 * 2 * bf * tf, h * tw, "I", tf, tw, iz * h0 * h0 / 4)
+        }
+
+        /** Channel: depth [h], flanges [bf] × [tf], web [tw] (m). Minor axis about its own centroid; Iω by the thin-wall formula. */
+        fun channel(h: Double, bf: Double, tf: Double, tw: Double, name: String = "C ${mm(h)}×${mm(bf)}"): Section {
+            val hw = h - 2 * tf
+            val a = 2 * bf * tf + hw * tw
+            val iy = (bf * h.pow(3) - (bf - tw) * hw.pow(3)) / 12
+            val xc = (2 * tf * bf * bf / 2 + hw * tw * tw / 2) / a
+            val iz = 2 * (tf * bf.pow(3) / 12 + tf * bf * (bf / 2 - xc).pow(2)) + hw * tw.pow(3) / 12 + hw * tw * (tw / 2 - xc).pow(2)
+            val jt = (2 * bf * tf.pow(3) + (h - tf) * tw.pow(3)) / 3
+            val b1 = bf - tw / 2; val h0 = h - tf
+            val iw = tf * b1.pow(3) * h0 * h0 / 12 * (3 * b1 * tf + 2 * h0 * tw) / (6 * b1 * tf + h0 * tw)
+            return Section(name, a, iy, iz, jt, bf, h, 5.0 / 6 * 2 * bf * tf, h * tw, "CHANNEL", tf, tw, iw)
+        }
+
+        /** T-section: overall depth [h] along local z, flange [bf] × [tf], stem [tw] (m). */
+        fun tee(h: Double, bf: Double, tf: Double, tw: Double, name: String = "T ${mm(h)}×${mm(bf)}"): Section {
+            val hs = h - tf
+            val a = bf * tf + hs * tw
+            val zc = (bf * tf * tf / 2 + hs * tw * (tf + hs / 2)) / a          // from the flange top
+            val iy = bf * tf.pow(3) / 12 + bf * tf * (zc - tf / 2).pow(2) + tw * hs.pow(3) / 12 + tw * hs * (tf + hs / 2 - zc).pow(2)
+            val iz = tf * bf.pow(3) / 12 + hs * tw.pow(3) / 12
+            val jt = (bf * tf.pow(3) + (h - tf / 2) * tw.pow(3)) / 3
+            val iw = tf.pow(3) * bf.pow(3) / 144 + (h - tf / 2).pow(3) * tw.pow(3) / 36
+            return Section(name, a, iy, iz, jt, bf, h, 5.0 / 6 * bf * tf, hs * tw, "TEE", tf, tw, iw)
+        }
+
+        /**
+         * Angle L [b] (leg along local y) × [d] (leg along local z) × [t] (m). Properties about the geometric
+         * centroidal axes (product of inertia neglected — adequate for truss members and connected angles).
+         */
+        fun angle(b: Double, d: Double, t: Double, name: String = "L ${mm(b)}×${mm(d)}×${mm(t)}"): Section {
+            val a = t * (b + d - t)
+            val zc = (b * t * t / 2 + (d - t) * t * (t + (d - t) / 2)) / a
+            val yc = (d * t * t / 2 + (b - t) * t * (t + (b - t) / 2)) / a
+            val iy = b * t.pow(3) / 12 + b * t * (zc - t / 2).pow(2) + t * (d - t).pow(3) / 12 + t * (d - t) * (t + (d - t) / 2 - zc).pow(2)
+            val iz = d * t.pow(3) / 12 + d * t * (yc - t / 2).pow(2) + t * (b - t).pow(3) / 12 + t * (b - t) * (t + (b - t) / 2 - yc).pow(2)
+            val jt = (b + d - t) * t.pow(3) / 3
+            val iw = t.pow(3) * (b.pow(3) + d.pow(3)) / 36
+            return Section(name, a, iy, iz, jt, b, d, b * t, d * t, "ANGLE", t, t, iw)
+        }
+
+        /**
+         * Isosceles triangle, base [b] along local y, height [h] along local z (m). J by Saint-Venant's
+         * approximation A⁴/(4π²Ip), scaled to be exact for the equilateral triangle (√3·a⁴/80).
+         */
+        fun triangle(b: Double, h: Double, name: String = "Tri ${mm(b)}×${mm(h)}"): Section {
+            val a = b * h / 2
+            val iy = b * h.pow(3) / 36; val iz = h * b.pow(3) / 48
+            val jt = 0.8774 * a.pow(4) / (4 * Math.PI * Math.PI * (iy + iz))
+            return Section(name, a, iy, iz, jt, b, h, 5.0 / 6 * a, 5.0 / 6 * a, "TRIANGLE")
+        }
+
         /** Rectangle: [b] along local y (width), [h] along local z (depth). Dimensions in metres. */
         fun rect(b: Double, h: Double, name: String = "R ${(b * 1000).toInt()}×${(h * 1000).toInt()}"): Section {
             val a = max(b, h)
@@ -141,6 +220,10 @@ data class Member(
     /** Rigid end offsets (m) measured along the member from node i / node j (joint zones). */
     val offsetI: Double = 0.0,
     val offsetJ: Double = 0.0,
+    /** Truss member (STAAD MEMBER TRUSS): axial only — moments and torsion released at both ends. */
+    val truss: Boolean = false,
+    /** Tension-only (bracing / cables): removed iteratively while in compression. */
+    val tensionOnly: Boolean = false,
 ) {
     /** Effective end condition: null = rigid, 0 = hinge, > 0 = spring stiffness. */
     val endI: Double? get() = if (hingeI) 0.0 else springI
@@ -154,8 +237,13 @@ enum class BeamTheory(val label: String) {
 }
 
 /** Six restraints in global axes: ux, uy, uz, φx, φy, φz (true = fixed). */
-data class Support(val node: Int, val restraints: List<Boolean>) {
-    init { require(restraints.size == 6) }
+data class Support(
+    val node: Int,
+    val restraints: List<Boolean>,
+    /** Elastic support springs kx, ky, kz (kN/m), kθx, kθy, kθz (kN·m/rad) on the unrestrained DOFs; null = none. */
+    val springs: List<Double>? = null,
+) {
+    init { require(restraints.size == 6); require(springs == null || springs.size == 6) }
 
     companion object {
         fun fixed(node: Int) = Support(node, List(6) { true })
@@ -163,6 +251,11 @@ data class Support(val node: Int, val restraints: List<Boolean>) {
         fun pinned(node: Int) = Support(node, listOf(true, true, true, true, false, false))
         /** Roller: free to slide in X. */
         fun rollerX(node: Int) = Support(node, listOf(false, true, true, true, false, false))
+        /** Roller: only the translation along global axis [axis] (0 = X, 1 = Y, 2 = Z) is held. */
+        fun roller(node: Int, axis: Int = 2) = Support(node, List(6) { it == axis })
+        /** Elastic support: translational springs (kN/m) and rotational springs (kN·m/rad). */
+        fun spring(node: Int, kx: Double, ky: Double, kz: Double, krx: Double = 0.0, kry: Double = 0.0, krz: Double = 0.0) =
+            Support(node, List(6) { false }, listOf(kx, ky, kz, krx, kry, krz))
     }
 }
 
@@ -273,6 +366,8 @@ data class FrameModel(
     val selfWeightFactor: Double = 1.0,
     val beamTheory: BeamTheory = BeamTheory.EULER,
     val panels: List<Panel> = emptyList(),
+    /** 2D plane frame / truss in the global XZ plane (STAAD PLANE): uy, φx, φz held at every node. */
+    val planeXZ: Boolean = false,
 ) {
     /** Load cases present in this model (DL is always present when self-weight is on). */
     val loadCases: Set<String>

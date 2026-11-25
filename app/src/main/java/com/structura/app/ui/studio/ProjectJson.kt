@@ -31,7 +31,7 @@ object ProjectJson {
         o.put("materials", JSONArray(mats.map { JSONObject().put("name", it.name).put("E", it.e).put("G", it.g).put("gamma", it.gamma) }))
         o.put("sections", JSONArray(secs.map {
             JSONObject().put("name", it.name).put("A", it.a).put("Iy", it.iy).put("Iz", it.iz).put("J", it.j).put("b", it.b).put("h", it.h)
-                .put("Asy", it.asy).put("Asz", it.asz).put("shape", it.shape).put("t", it.t).put("tw", it.tw)
+                .put("Asy", it.asy).put("Asz", it.asz).put("shape", it.shape).put("t", it.t).put("tw", it.tw).put("Iw", it.iw)
         }))
         o.put("nodes", JSONArray(m.nodes.map { JSONObject().put("id", it.id).put("x", it.x).put("y", it.y).put("z", it.z) }))
         o.put("members", JSONArray(m.members.map {
@@ -39,9 +39,10 @@ object ProjectJson {
                 .put("material", mats.indexOf(it.material)).put("section", secs.indexOf(it.section))
                 .put("beta", it.betaDeg).put("hingeI", it.hingeI).put("hingeJ", it.hingeJ)
                 .apply { it.springI?.let { k -> put("springI", k) }; it.springJ?.let { k -> put("springJ", k) } }
-                .put("offsetI", it.offsetI).put("offsetJ", it.offsetJ)
+                .put("offsetI", it.offsetI).put("offsetJ", it.offsetJ).put("truss", it.truss).put("tensionOnly", it.tensionOnly)
         }))
-        o.put("supports", JSONArray(m.supports.map { JSONObject().put("node", it.node).put("restraints", JSONArray(it.restraints)) }))
+        o.put("supports", JSONArray(m.supports.map { s -> JSONObject().put("node", s.node).put("restraints", JSONArray(s.restraints)).apply { s.springs?.let { put("springs", JSONArray(it)) } } }))
+        o.put("planeXZ", m.planeXZ)
         o.put("nodalLoads", JSONArray(m.nodalLoads.map { JSONObject().put("node", it.node).put("case", it.case).put("values", JSONArray(it.values)) }))
         o.put("memberLoads", JSONArray(m.memberLoads.map { l ->
             JSONObject().put("member", l.member).put("case", l.case).put("dir", l.dir.name).put("w", l.w)
@@ -69,7 +70,7 @@ object ProjectJson {
         val secs = arr("sections") {
             Section(it.getString("name"), it.getDouble("A"), it.getDouble("Iy"), it.getDouble("Iz"), it.getDouble("J"),
                 it.optDouble("b", 0.0), it.optDouble("h", 0.0), it.optDouble("Asy", 0.0), it.optDouble("Asz", 0.0),
-                it.optString("shape", "GENERAL"), it.optDouble("t", 0.0), it.optDouble("tw", 0.0))
+                it.optString("shape", "GENERAL"), it.optDouble("t", 0.0), it.optDouble("tw", 0.0), it.optDouble("Iw", 0.0))
         }
         return FrameModel(
             nodes = arr("nodes") { Node(it.getInt("id"), it.getDouble("x"), it.getDouble("y"), it.getDouble("z")) },
@@ -77,9 +78,13 @@ object ProjectJson {
                 Member(it.getInt("id"), it.getInt("i"), it.getInt("j"), mats[it.getInt("material")], secs[it.getInt("section")],
                     it.optDouble("beta", 0.0), it.optBoolean("hingeI"), it.optBoolean("hingeJ"),
                     if (it.has("springI")) it.getDouble("springI") else null, if (it.has("springJ")) it.getDouble("springJ") else null,
-                    it.optDouble("offsetI", 0.0), it.optDouble("offsetJ", 0.0))
+                    it.optDouble("offsetI", 0.0), it.optDouble("offsetJ", 0.0), it.optBoolean("truss"), it.optBoolean("tensionOnly"))
             },
-            supports = arr("supports") { s -> val r = s.getJSONArray("restraints"); Support(s.getInt("node"), (0 until 6).map { r.getBoolean(it) }) },
+            supports = arr("supports") { s ->
+                val r = s.getJSONArray("restraints")
+                Support(s.getInt("node"), (0 until 6).map { r.getBoolean(it) }, s.optJSONArray("springs")?.let { k -> (0 until 6).map { k.getDouble(it) } })
+            },
+            planeXZ = o.optBoolean("planeXZ", false),
             nodalLoads = arr("nodalLoads") { NodalLoad(it.getInt("node"), dbl(it.getJSONArray("values")), it.optString("case", "DL")) },
             memberLoads = arr("memberLoads") {
                 MemberLoad(it.getInt("member"), LoadDir.valueOf(it.getString("dir")), it.getDouble("w"), it.optString("case", "DL"),
