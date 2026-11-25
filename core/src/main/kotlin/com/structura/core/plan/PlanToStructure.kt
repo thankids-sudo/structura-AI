@@ -161,6 +161,8 @@ data class BuildingInput(
     val fy: Double = 500.0,
     val minColumn: Double = 0.3,             // m (IS 13920 Cl. 7.1.2: ≥ 300 mm)
     val steelRatio: Double = 0.01,
+    /** Apply IS 875-2 Cl. 3.2.1 live-load reduction in the column take-down. */
+    val reduceLive: Boolean = true,
 )
 
 data class SizedColumn(val column: Int, val label: String, val storey: Int, val pu: Double, val b: Double, val d: Double, val position: String)
@@ -237,15 +239,17 @@ object PlanToStructure {
             val myBeams = beams.filter { it.beam.a == c.id || it.beam.b == c.id }
             val beamSw = myBeams.sumOf { 25 * it.b * (it.d - t) * it.span / 2 }
             val wallLen = myBeams.sumOf { it.span / 2 }
-            var cum = 0.0
+            var cum = 0.0; var cumLive = 0.0
             val perStorey = ArrayList<SizedColumn>()
             var size = inp.minColumn to inp.minColumn
             for (s in inp.storeys downTo 1) {
                 val roof = s == inp.storeys
-                val floor = area * (25 * t + inp.finishes + if (roof) inp.roofLive else inp.liveLoad) + beamSw + (if (roof) 0.0 else inp.wallLoad * wallLen)
+                val dead = area * (25 * t + inp.finishes) + beamSw + (if (roof) 0.0 else inp.wallLoad * wallLen)
+                val live = area * (if (roof) inp.roofLive else inp.liveLoad)
                 val colSw = 25 * size.first * size.second * (if (s == 1) inp.storeyHeight + inp.plinthHeight else inp.storeyHeight)
-                cum += floor + colSw
-                val pu = 1.5 * cum * factor
+                cum += dead + colSw; cumLive += live
+                val red = if (inp.reduceLive) com.structura.core.loads.IS875.reduction(inp.storeys - s + 1) else 0.0
+                val pu = 1.5 * (cum + cumLive * (1 - red)) * factor
                 val p = inp.steelRatio
                 val ag = pu * 1e3 / (0.4 * inp.fck * (1 - p) + 0.67 * inp.fy * p) / 1e6      // m², Cl. 39.3
                 // keep the architect's short side (≥ minimum), deepen the long side as needed
@@ -257,7 +261,7 @@ object PlanToStructure {
             sized += perStorey.reversed()
         }
         steps += "Columns: tributary area × (slab ${"%.2f".format(25 * t)} + finishes ${inp.finishes} + LL ${inp.liveLoad}/${inp.roofLive} roof) + beams + walls ${inp.wallLoad} kN/m + self-weight, " +
-            "summed from the roof; Pu = 1.5 × ΣP × (1.1 interior, 1.25 edge, 1.5 corner) for moments; Ag = Pu / (0.4fck(1−p) + 0.67fy·p), p = ${"%.1f".format(inp.steelRatio * 100)} % (Cl. 39.3); min ${(inp.minColumn * 1000).toInt()} mm (IS 13920)"
+            "summed from the roof${if (inp.reduceLive) ", LL reduced by floors carried (IS 875-2 Cl. 3.2.1: 10 % for 2 … 40 % for 5–10)" else ""}; Pu = 1.5 × ΣP × (1.1 interior, 1.25 edge, 1.5 corner) for moments; Ag = Pu / (0.4fck(1−p) + 0.67fy·p), p = ${"%.1f".format(inp.steelRatio * 100)} % (Cl. 39.3); min ${(inp.minColumn * 1000).toInt()} mm (IS 13920)"
 
         // quantities
         val pnl = panels(layout)

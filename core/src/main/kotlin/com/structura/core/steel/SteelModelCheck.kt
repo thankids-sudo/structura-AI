@@ -29,6 +29,7 @@ object SteelModelCheck {
 
     /** Steel section (mm) back from a FEM section, or null if it is not a steel shape we can check. */
     fun steelSection(f: Section): SteelSection? {
+        SteelLibrary.find(f.name)?.let { lib -> if (kotlin.math.abs(lib.depth / 1000 - f.h) < 1e-6) return lib }   // tabulated properties
         val h = f.h * 1000; val b = f.b * 1000; val t = f.t * 1000
         return when (f.shape) {
             "I" -> SteelSection.iSection(f.name, h, b, t, f.tw * 1000)
