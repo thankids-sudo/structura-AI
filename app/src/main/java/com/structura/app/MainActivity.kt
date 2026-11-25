@@ -26,6 +26,7 @@ object Routes {
     const val FEM = "fem/frame"
     const val STUDIO = "fem/studio"
     const val STANDARDS = "standards"
+    const val PLAN = "plan"
 }
 
 class MainActivity : ComponentActivity() {
@@ -58,6 +59,9 @@ class MainActivity : ComponentActivity() {
                             onDesignBeam = { nav.navigate(Routes.RCC_BEAM) },
                             onStudio = { nav.navigate(Routes.STUDIO) { popUpTo(Routes.HOME) } },
                         )
+                    }
+                    composable(Routes.PLAN) {
+                        com.structura.app.ui.plan.PlanScreen(onBack = { nav.popBackStack() }, onStudio = { nav.navigate(Routes.STUDIO) })
                     }
                     composable(Routes.STANDARDS) {
                         StandardsScreen(onBack = { nav.popBackStack() })

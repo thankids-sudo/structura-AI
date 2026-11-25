@@ -42,7 +42,9 @@ Each step is built, tested and committed separately.
 - [ ] 3.4 AI explains results and sanity-checks them (load path, unusual ratios, missing combinations)
 
 ## Phase 4: Drawing → Structure AI
-- [ ] 4.1 Import a plan (PDF/image/DXF) and detect the grid
-- [ ] 4.2 Propose a column and beam layout for the user to edit
-- [ ] 4.3 Load take-down and preliminary sizing of every member
-- [ ] 4.4 Export the design summary and BOQ (link to EstimateX / JAUEstimate)
+- [x] 4.1 Import a DXF plan and detect the grid (LINE, LWPOLYLINE, POLYLINE, CIRCLE, blocks; $INSUNITS)
+- [ ] 4.1b PDF / photo of a plan (needs on-device vision — next)
+- [x] 4.2 Propose a column and beam layout for the user to edit (tap to remove columns; beams re-proposed)
+- [x] 4.3 Load take-down and preliminary sizing of every member (slab lx/32, beam span/12, columns Cl. 39.3)
+- [x] 4.4 Export the design summary and quantities (CSV); 3D model straight into Studio
+- [ ] 4.4b Direct hand-over to EstimateX / JAUEstimate (SOR item codes)

@@ -72,7 +72,11 @@ val MODULES = listOf(
     ),
     StructuraModule(
         "Drawing → Structure AI", "Plan → grid → layout → sizes", Icons.Filled.ViewInAr, 4,
-        listOf(ModuleTool("Import plan", null), ModuleTool("Column / beam layout", null), ModuleTool("Load take-down", null)),
+        listOf(
+            ModuleTool("Import DXF plan → grid, columns, beams", Routes.PLAN),
+            ModuleTool("Load take-down & preliminary sizes", Routes.PLAN),
+            ModuleTool("Generate 3D model → Studio · quantities CSV", Routes.PLAN),
+        ),
     ),
 )
 

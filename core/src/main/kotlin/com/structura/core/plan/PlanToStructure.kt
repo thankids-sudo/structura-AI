@@ -32,6 +32,8 @@ class PlanLayout(
     val gridX: List<Double>, val gridY: List<Double>,
     val columns: List<PlanColumn>, val beams: List<PlanBeam>,
     val notes: List<String>,
+    /** DXF coordinates (m) of grid intersection A1 — layout coordinates are measured from here. */
+    val originX: Double = 0.0, val originY: Double = 0.0,
 ) {
     fun column(id: Int) = columns.first { it.id == id }
     fun span(bm: PlanBeam): Double { val p = column(bm.a); val q = column(bm.b); return hypot(q.x - p.x, q.y - p.y) }
@@ -39,7 +41,7 @@ class PlanLayout(
     /** Layout without the [removed] column ids; beams re-derived along the grid lines. */
     fun without(removed: Set<Int>, maxSpan: Double = PlanRecognizer.MAX_SPAN): PlanLayout {
         val cols = columns.filter { it.id !in removed }
-        return PlanLayout(gridX, gridY, cols, PlanRecognizer.beamsFor(cols, maxSpan), notes)
+        return PlanLayout(gridX, gridY, cols, PlanRecognizer.beamsFor(cols, maxSpan), notes, originX, originY)
     }
 
     companion object {
@@ -107,7 +109,7 @@ object PlanRecognizer {
         val gridXs = gx.map { it - x0 }; val gridYs = gy.map { it - y0 }
         val bays = (gridXs.zipWithNext { a, b -> b - a } + gridYs.zipWithNext { a, b -> b - a })
         if (bays.any { it > maxSpan }) notes += "Some bays exceed ${maxSpan} m — no beam proposed there (add an intermediate column or use a transfer girder)"
-        return PlanLayout(gridXs, gridYs, cols, beamsFor(cols, maxSpan), notes + plan.warnings)
+        return PlanLayout(gridXs, gridYs, cols, beamsFor(cols, maxSpan), notes + plan.warnings, x0, y0)
     }
 
     /** Beams between consecutive columns on the same grid line. */

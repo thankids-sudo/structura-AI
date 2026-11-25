@@ -7,7 +7,7 @@ Android app for structural design to Indian Standards. It has four modules, buil
 | 1 | **RCC Design**: beam, slab, column, footing, BBS | IS 456, IS 875, IS 1893, SP 16 | **Beam design + UCS detail drawing / DXF done** |
 | 2 | **Steel Design**: beams, columns, tension members, connections, checks from 3D Studio | IS 800, IS 808, IS 4923 | Done |
 | 3 | **FEM Analysis + AI**: 3D frame FEM (RFEM-style), N/V/M diagrams, deformed shape, AI result check | Direct stiffness method | **3D frame solver done** |
-| 4 | **Drawing → Structure AI**: plan import, grid/column layout, load take-down, member sizing | — | Planned |
+| 4 | **Drawing → Structure AI** (DXF done): plan import, grid/column layout, load take-down, member sizing | — | Planned |
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the step-by-step build plan.
 
@@ -109,6 +109,19 @@ Every check carries its clause:
 - **Lengths:** K = 0.65 / 0.8 / 1.0 / 1.2 / 2.0 applied to node-to-node length about both axes; LLT/L = 0 (restrained) … 1.2. Split members at bracing points to shorten L.
 - **Output:** members coloured by η in 3D (red > 1.0), sortable table, tap for the full clause-by-clause check sheet; section 11 of the HTML report and `steelChecksIS800` in Engineering JSON.
 - FEM section mapping: `SteelModelCheck.femSection` puts the IS 808 major axis (Izz) in FEM Iy — web vertical, gravity bending = major axis.
+
+## Drawing → Structure AI (Phase 4)
+Home → "Drawing → Structure AI". Code: `core/plan/` (DxfReader, PlanRecognizer, PlanToStructure, SamplePlan) and `app/ui/plan/PlanScreen.kt`.
+- **Input:** ASCII DXF (AutoCAD SAVEAS → DXF). Reads LINE, LWPOLYLINE, POLYLINE, CIRCLE and INSERT (blocks expanded with scale/rotation; entities on layer 0 take the insert's layer). Units from `$INSUNITS`, otherwise > 200 units ⇒ mm.
+- **Columns:** closed rectangles or circles 150–1500 mm. If any layer name contains `COL`, only those layers are used — keep columns on a COLUMN layer for clean results.
+- **Grid:** column centres clustered within 300 mm into numbered (1, 2, …, along X) and lettered (A, B, …, along Y; I and O skipped) lines, snapped to GRID/AXIS layer lines when present. One column per intersection; origin at A1.
+- **Beams:** between consecutive columns on each grid line, up to the max span (default 10 m). Tap a column to remove it and the beams are re-proposed.
+- **Sizing (preliminary):**
+  - Slab t = largest short span / 32, ≥ 125 mm.
+  - Beam D = span/12 (25 mm steps, ≥ 300); b = 230 (D ≤ 450) else 300 mm.
+  - Columns: tributary area × (slab + finishes + LL) + beam self-weight + walls on typical floors + column self-weight, summed from the roof. Pu = 1.5 ΣP × 1.1 / 1.25 / 1.5 (interior / edge / corner, for moment), Ag from Cl. 39.3 with p = 1 %; drawn short side kept (≥ 300 mm, IS 13920), long side deepened.
+- **Model:** fixed at foundation top, first lift = plinth + storey height, beams at every floor, slab DL and LL distributed to beams by the floor-load tool (45° / one-way), walls as beam UDL. Opens in 3D Studio for analysis, RCC/steel checks and reports.
+- **Quantities:** concrete in slabs / beams (below slab, clear spans) / columns, shuttering, built-up area, and steel by allowance (80 / 130 / 180 kg/m³) — replace with BBS after detailed design. CSV export.
 
 ## FEM analysis (RFEM-style 3D frame)
 
