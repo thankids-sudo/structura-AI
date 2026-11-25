@@ -19,6 +19,9 @@ object Routes {
     const val HOME = "home"
     const val RCC_BEAM = "rcc/beam"
     const val RCC_DRAWING = "rcc/drawing"
+    const val RCC_SLAB = "rcc/slab"
+    const val RCC_COLUMN = "rcc/column"
+    const val RCC_FOOTING = "rcc/footing"
     const val FEM = "fem/frame"
     const val STUDIO = "fem/studio"
     const val STANDARDS = "standards"
@@ -41,6 +44,9 @@ class MainActivity : ComponentActivity() {
                             onDrawing = { nav.navigate(Routes.RCC_DRAWING) },
                         )
                     }
+                    composable(Routes.RCC_SLAB) { com.structura.app.ui.rcc.SlabScreen(onBack = { nav.popBackStack() }) }
+                    composable(Routes.RCC_COLUMN) { com.structura.app.ui.rcc.ColumnScreen(onBack = { nav.popBackStack() }) }
+                    composable(Routes.RCC_FOOTING) { com.structura.app.ui.rcc.FootingScreen(onBack = { nav.popBackStack() }) }
                     composable(Routes.RCC_DRAWING) {
                         DrawingScreen(onBack = { nav.popBackStack() })
                     }

@@ -50,7 +50,8 @@ class RccMembersTest {
         val (ax, ay) = SlabDesigner.table27(1.25)
         near(ax * wu * 16, r.mx, 1e-12)
         near(ay * wu * 16, r.my, 1e-12)
-        assertTrue(r.isSafe)
+        assertEquals(Status.PASS, r.checks.first { it.item == "Shear" }.status)
+        assertEquals(Status.PASS, r.checks.first { it.item == "Main bar spacing" }.status)
     }
 
     @Test

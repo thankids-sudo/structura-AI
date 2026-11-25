@@ -51,10 +51,9 @@ val MODULES = listOf(
         listOf(
             ModuleTool("Beam design", Routes.RCC_BEAM),
             ModuleTool("Beam detail drawing (UCS · DXF)", Routes.RCC_DRAWING),
-            ModuleTool("Slab design", null),
-            ModuleTool("Column design", null),
-            ModuleTool("Footing design", null),
-            ModuleTool("Bar bending schedule", null),
+            ModuleTool("Slab design (one-way / two-way)", Routes.RCC_SLAB),
+            ModuleTool("Column design (biaxial, slender)", Routes.RCC_COLUMN),
+            ModuleTool("Isolated footing design", Routes.RCC_FOOTING),
         ),
     ),
     StructuraModule(

@@ -6,12 +6,12 @@ Each step is built, tested and committed separately.
 - [x] 1.0 Project scaffold: `:core` engine + `:app` Compose UI, home with all 4 modules
 - [x] 1.1 Rectangular beam: singly/doubly, shear, deflection, detailing checks, shareable report
 - [x] 1.1a UCS-based beam detail drawing (elevation + section A-A) with DXF R12 export
-- [ ] 1.2 Two-layer bars with automatic d recalculation; flanged (T/L) beams per Cl. 23.1.2 & Annex G-2
-- [ ] 1.3 Slabs: one-way, two-way (Annex D, Table 26/27)
-- [ ] 1.4 Columns: axial + uniaxial/biaxial (Cl. 39, SP 16 interaction charts), slenderness (Cl. 25)
-- [ ] 1.5 Isolated footings: bearing, one-way & punching shear, flexure (Cl. 34)
+- [x] 1.2 Two-layer bars with automatic d recalculation; flanged (T/L) beams per Cl. 23.1.2 & Annex G-2
+- [x] 1.3 Slabs: one-way, two-way (Annex D, Table 26/27)
+- [x] 1.4 Columns: axial + uniaxial/biaxial (Cl. 39, SP 16 interaction charts), slenderness (Cl. 25)
+- [x] 1.5 Isolated footings: bearing, one-way & punching shear, flexure (Cl. 34)
 - [ ] 1.6 Loads: IS 875 Part 1/2 dead & imposed, load combinations (Table 18)
-- [ ] 1.7 Bar bending schedule export (Excel / PDF)
+- [x] 1.7 Bar bending schedule export (Excel / PDF)
 
 ## Phase 2: Steel Design (IS 800:2007)
 - [ ] 2.1 Section database: IS 808 / IS 4923 (reuse the CivilStructuralToolkit JSON, ~1000 sections)

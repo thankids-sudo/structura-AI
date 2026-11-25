@@ -69,6 +69,8 @@ fun BeamDesignScreen(onBack: () -> Unit, onDrawing: () -> Unit) {
     var useUdl by rememberSaveable { mutableStateOf(pre == null) }
     var wu by rememberSaveable { mutableStateOf("30") }
     var muIn by rememberSaveable { mutableStateOf(pre?.let { String.format(java.util.Locale.US, "%.1f", it.mu) } ?: "90") }
+    var bf by rememberSaveable { mutableStateOf("0") }
+    var df by rememberSaveable { mutableStateOf("0") }
     var vuIn by rememberSaveable { mutableStateOf(pre?.let { String.format(java.util.Locale.US, "%.1f", it.vu) } ?: "80") }
 
     var result by remember { mutableStateOf<BeamResult?>(null) }
@@ -90,6 +92,7 @@ fun BeamDesignScreen(onBack: () -> Unit, onDrawing: () -> Unit) {
                     effectiveSpan = span * 1000.0, support = support,
                     fck = fck.toDouble(), fy = fy.toDouble(),
                     factoredMoment = mu, factoredShear = vu,
+                    flangeWidth = bf.toDoubleOrNull() ?: 0.0, flangeDepth = df.toDoubleOrNull() ?: 0.0,
                 )
             val r = BeamDesigner.design(input)
             result = r
@@ -140,6 +143,10 @@ fun BeamDesignScreen(onBack: () -> Unit, onDrawing: () -> Unit) {
                 Num("Stirrup φ", stirrup, Modifier.weight(1f)) { stirrup = it }
             }
 
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Num("Flange bf (mm, 0 = rect.)", bf, Modifier.weight(1f)) { bf = it }
+                Num("Flange Df (mm)", df, Modifier.weight(1f)) { df = it }
+            }
             Section("Materials")
             ChipRow("Concrete", IS456.CONCRETE_GRADES.filter { it >= 15 }, fck, { "M$it" }) { fck = it }
             ChipRow("Steel", listOf(250, 415, 500), fy, { "Fe $it" }) { fy = it }
@@ -171,6 +178,7 @@ fun BeamDesignScreen(onBack: () -> Unit, onDrawing: () -> Unit) {
                     Text("Detail drawing (UCS) & DXF export")
                 }
                 ResultView(it)
+                DesignSession.beamInput?.let { inp -> BbsTable(com.structura.core.rcc.BarBendingSchedule.beam(inp, it), "beam") }
             }
             Spacer(Modifier.height(32.dp))
         }
@@ -186,7 +194,7 @@ private fun ResultView(r: BeamResult) {
                 color = if (r.isSafe) PassGreen else FailRed,
                 fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium,
             )
-            Text("Bottom: ${r.tensionBars}  (${"%.0f".format(r.tensionBars.area)} mm²)")
+            Text("Bottom: ${r.tensionBars}  (${"%.0f".format(r.tensionBars.area)} mm²)" + if (r.layers.size > 1) " in 2 layers: ${r.layers[0]} + ${r.layers[1]}" else "")
             r.compressionBars?.let { Text("Top: $it  (${"%.0f".format(it.area)} mm²)") }
                 ?: Text("Top: 2 hanger bars (nominal)")
             r.stirrupSpacing?.let { Text("Stirrups: @ ${it.toInt()} mm c/c") }
