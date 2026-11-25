@@ -115,6 +115,11 @@ Same workflow as the Structura AI web version:
   - Slab → beam load transfer (one-way / two-way equivalent UDL).
   - Quick reference for IS 875 Parts 1/2/3/5, IS 456 Table 16/18, IS 1893 and IS 800.
 
+### Batch C additions
+- **Floor load tool (STAAD-style):** an area load q (kN/m²) on a bay (tap 4 corners) or on a whole level (tap any node on it; every rectangular bay enclosed by beams is found automatically). It is distributed as two-way 45° (triangles and trapezoids) or one-way (q·lx/2 on the long beams); Auto picks one-way when ly/lx > 2. Edges made of several members are handled, and the total transferred is always q × area. The results are stored as ordinary member loads.
+- **{ } Engineering JSON:** the full model plus results for every combination (displacements, reactions, end forces, internal-force stations, panels), the ULS envelope, buckling and modal results, in one machine-readable file.
+- **# STAAD .std export:** a STAAD.Pro input file with joints, members, shells, materials, properties (PRIS / TUBE / PIPE), betas, offsets, supports, releases and springs, load cases (SELFWEIGHT, JOINT, MEMBER UNI/TRAP/CON, ELEMENT PR) and IS 456 combinations, using SET Z UP. Check the import in STAAD.Pro before running.
+
 ## Detail drawing (UCS-based, DXF)
 
 - Every view has its own **named UCS**: `ELEVATION` (origin at the soffit, outer face of the left support), `SECTION_A-A` (origin at the bottom-left corner of the section), and `NOTES`.

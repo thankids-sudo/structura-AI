@@ -57,7 +57,9 @@ import com.structura.app.ui.theme.FailRed
 import com.structura.core.fem.BeamTheory
 import com.structura.core.fem.Buckling
 import com.structura.core.fem.BucklingResult
+import com.structura.core.fem.EngineeringJson
 import com.structura.core.fem.FemReport
+import com.structura.core.fem.FloorLoad
 import com.structura.core.fem.FrameModel
 import com.structura.core.fem.FrameResults
 import com.structura.core.fem.FrameSolver
@@ -74,6 +76,7 @@ import com.structura.core.fem.ModalResult
 import com.structura.core.fem.ModelEditor
 import com.structura.core.fem.ModelEditor.SupportType
 import com.structura.core.fem.Section
+import com.structura.core.fem.StaadExport
 import com.structura.core.fem.Vec3
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -91,6 +94,7 @@ enum class Tool(val label: String, val hint: String) {
     UDL("Member load", "Tap a member to add a distributed load (uniform, partial or trapezoidal; − = downward in global Z)."),
     PANEL("Panel", "Tap 4 nodes (or grid points) around the panel, anticlockwise seen from above."),
     PANEL_MESH("Panel mesh", "Tap a panel to split it into nx × ny panels (edge beams are split to stay connected)."),
+    FLOOR("Floor load", "STAAD-style floor load: Bay → tap 4 corner nodes in order; Level → tap any node on the floor level."),
     DELETE("Delete", "Tap a node, member or panel to delete it."),
 }
 
@@ -125,6 +129,10 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
     val panelSpec = remember { PanelSpec() }
     var pendingPanel by remember { mutableStateOf(listOf<Int>()) }
     var selPanel by remember { mutableStateOf<Int?>(null) }
+    var floorQ by remember { mutableStateOf("-3.0") }
+    var floorByLevel by remember { mutableStateOf(true) }
+    var floorMode by remember { mutableStateOf(FloorLoad.Mode.AUTO) }
+    var pendingBay by remember { mutableStateOf(listOf<Int>()) }
     var case by remember { mutableStateOf(LoadCase.DL) }
     var pending by remember { mutableStateOf<Int?>(null) }
     var selNode by remember { mutableStateOf<Int?>(null) }
@@ -224,6 +232,27 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                                 .onFailure { e -> message = "Panel rejected: ${e.message}" }
                         }
                         .onFailure { message = it.message }
+                }
+            }
+            Tool.FLOOR -> {
+                val nid = t.node ?: run { message = "Tap a node."; return }
+                val qv = d(floorQ)
+                if (floorByLevel) {
+                    val z = model.node(nid).z
+                    val r = runCatching { FloorLoad.applyToLevel(model, z, qv, case, floorMode) }.getOrElse { message = it.message; return }
+                    if (r.bays > 0) commit(r.model, "Floor load ${fmt(qv)} kN/m² ($case) on ${r.bays} bays at Z = ${fmt(z)} m → ${fmt(r.total)} kN to beams" +
+                        (if (r.warnings.isNotEmpty()) "\n" + r.warnings.joinToString("\n") else ""))
+                    else message = r.warnings.joinToString("\n")
+                } else {
+                    if (nid in pendingBay) return
+                    val list = pendingBay + nid
+                    if (list.size < 4) { pendingBay = list; message = "Bay corner ${list.size}/4: N$nid" }
+                    else {
+                        pendingBay = emptyList()
+                        runCatching { FloorLoad.applyToBay(model, list, qv, case, floorMode) }
+                            .onSuccess { r -> commit(r.model, "Floor load on bay → ${fmt(r.total)} kN to beams" + (if (r.warnings.isNotEmpty()) "\n" + r.warnings.joinToString("\n") else "")) }
+                            .onFailure { message = it.message }
+                    }
                 }
             }
             Tool.PANEL_MESH -> t.panel?.let { pid ->
@@ -343,6 +372,24 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 AssistChip(onClick = { saveLauncher.launch("${model.title.replace(' ', '_')}.structura.json") }, label = { Text("↓ Save project") })
                 AssistChip(onClick = { openLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }, label = { Text("↑ Open project") })
                 AssistChip(onClick = {
+                    busy = true
+                    scope.launch {
+                        try {
+                            val cs = combos.ifEmpty { LoadCombination.isLimitState(LoadCase.WL in model.loadCases) }
+                            val json = withContext(Dispatchers.Default) {
+                                val all = FrameSolver.analyseAll(model, cs)
+                                EngineeringJson.build(model, all, FemReport.envelope(all.map { it.second }), buckling, modal)
+                            }
+                            shareTextFile(context, "${model.title.replace(' ', '_')}.engineering.json", "application/json", json, "Structura AI — engineering JSON")
+                        } catch (e: Exception) { message = "JSON export: ${e.message}" } finally { busy = false }
+                    }
+                }, label = { Text("{ } Engineering JSON") })
+                AssistChip(onClick = {
+                    runCatching { StaadExport.write(model) }
+                        .onSuccess { shareTextFile(context, "${model.title.replace(' ', '_')}.std", "text/plain", it, "Structura AI — STAAD.Pro input") }
+                        .onFailure { message = "STAAD export: ${it.message}" }
+                }, label = { Text("# STAAD .std") })
+                AssistChip(onClick = {
                     val issues = ModelEditor.check(model)
                     message = if (issues.isEmpty()) "Model check: OK ✔" else issues.joinToString("\n")
                 }, label = { Text("✓ Model check") })
@@ -385,7 +432,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                     selectedMember = selMember,
                     pendingNode = pending,
                     selectedPanel = selPanel,
-                    pendingNodes = pendingPanel,
+                    pendingNodes = pendingPanel + pendingBay,
                     buckling = buckling,
                     onTap = { onTap(it) },
                     modeShape = modal?.modes?.getOrNull(modeIdx)?.shape,
@@ -400,7 +447,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
 
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Tool.entries.forEach { t ->
-                    FilterChip(t == tool, { tool = t; pending = null; pendingPanel = emptyList(); message = null }, { Text(t.label) })
+                    FilterChip(t == tool, { tool = t; pending = null; pendingPanel = emptyList(); pendingBay = emptyList(); message = null }, { Text(t.label) })
                 }
             }
 
@@ -416,6 +463,20 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                     Num("Snap (m)", snapTxt, Modifier.weight(1f)) { snapTxt = it }
                 }
                 if (tool == Tool.MEMBER) SectionPicker(spec)
+            }
+            if (tool == Tool.FLOOR) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    FilterChip(floorByLevel, { floorByLevel = true; pendingBay = emptyList() }, { Text("Whole level") })
+                    FilterChip(!floorByLevel, { floorByLevel = false }, { Text("One bay (4 corners)") })
+                    FloorLoad.Mode.entries.forEach { md -> FilterChip(md == floorMode, { floorMode = md }, { Text(md.label) }) }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Num("q (kN/m², − = down)", floorQ, Modifier.weight(1f)) { floorQ = it }
+                    listOf(LoadCase.DL, LoadCase.LL, LoadCase.WL).forEach { c -> FilterChip(c == case, { case = c }, { Text(c) }) }
+                }
+                Text("Two-way: 45° yield lines → triangles on short beams, trapezoids on long beams. One-way: q·lx/2 on each long beam. " +
+                    "Auto uses one-way when ly/lx > 2. Loads become ordinary member loads (editable, shown in the report).",
+                    style = MaterialTheme.typography.labelSmall)
             }
             if (tool == Tool.LOAD || tool == Tool.UDL) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {

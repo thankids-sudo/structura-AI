@@ -74,7 +74,7 @@ class BatchCTest {
     @Test
     fun staadExport_structure() {
         var m = FloorLoad.applyToLevel(frame(listOf(5.0), listOf(4.0)), 3.0, -3.0, LoadCase.LL).model
-        m = m.copy(members = m.members.map { if (it.id == 1) it.copy(hingeJ = true, offsetI = 0.2) else it })
+        m = m.copy(selfWeight = true, members = m.members.map { if (it.id == 1) it.copy(hingeJ = true, offsetI = 0.2) else it })
         val top = m.nodes.filter { it.z > 2.9 }.map { it.id }
         m = ModelEditor.addPanel(m, listOf(top[0], top[1], top[3], top[2]), Panel.rcc(0, top, 0.125, pressure = -2.0)).first
         val std = StaadExport.write(m)
