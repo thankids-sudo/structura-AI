@@ -55,7 +55,7 @@ class RccMembersTest {
         val inp = SlabInput(lx = 4.0, ly = 5.0, thickness = 150.0, finishes = 1.0, liveLoad = 3.0, fck = 20.0, fy = 500.0,
             type = SlabType.TWO_WAY_RESTRAINED, edgeCase = SlabEdgeCase.TWO_ADJACENT)
         val r = SlabDesigner.design(inp)
-        val ax = (0.065 + 0.071) / 2; val axp = (0.049 + 0.053) / 2
+        val ax = (0.060 + 0.065) / 2; val axp = (0.045 + 0.049) / 2   // ly/lx = 1.25 lies between the 1.2 and 1.3 columns
         near(axp * r.wu * 16, r.mx, 1e-9)
         near(0.035 * r.wu * 16, r.my, 1e-9)
         val top = r.top!!
