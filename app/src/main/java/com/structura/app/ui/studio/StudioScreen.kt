@@ -76,6 +76,7 @@ import com.structura.core.fem.ModalResult
 import com.structura.core.fem.ModelEditor
 import com.structura.core.fem.ModelEditor.SupportType
 import com.structura.core.fem.Section
+import com.structura.core.fem.Seismic
 import com.structura.core.fem.StaadExport
 import com.structura.core.fem.Vec3
 import kotlinx.coroutines.Dispatchers
@@ -151,13 +152,21 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
     var modal by remember { mutableStateOf<ModalResult?>(null) }
     var modeIdx by remember { mutableStateOf(0) }
     var llMass by remember { mutableStateOf(0.25) }
+    var seismic by remember { mutableStateOf<Seismic.Result?>(null) }
+    var showSeismic by remember { mutableStateOf(false) }
+    var eqZ by remember { mutableStateOf(0.16) }
+    var eqI by remember { mutableStateOf(1.0) }
+    var eqR by remember { mutableStateOf(5.0) }
+    var eqSoil by remember { mutableStateOf(Seismic.Soil.II) }
+    var eqBuilding by remember { mutableStateOf(Seismic.BuildingType.RC_MRF) }
+    var seismicEnv by remember { mutableStateOf(false) }
 
     fun d(s: String, def: Double = 0.0) = s.replace(',', '.').toDoubleOrNull() ?: def
 
     fun commit(m: FrameModel, msg: String? = null) {
         history = (history.take(pos + 1) + m).takeLast(80)
         pos = history.size - 1
-        results = null; buckling = null; env = emptyList(); modal = null
+        results = null; buckling = null; env = emptyList(); modal = null; seismic = null; seismicEnv = false
         if (view != ResultView.MODEL) view = ResultView.MODEL
         message = msg
     }
@@ -312,6 +321,26 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
         }
     }
 
+    fun runSeismic() {
+        busy = true; message = null
+        scope.launch {
+            try {
+                val p = Seismic.Params(eqZ, eqI, eqR, eqSoil, eqBuilding, llMass)
+                val (res, envelope, first) = withContext(Dispatchers.Default) {
+                    val r = Seismic.analyse(model, p)
+                    Triple(r, Seismic.envelope(model, r), FrameSolver.analyse(model, LoadCombination.isLimitState(false).first()))
+                }
+                seismic = res; modal = res.modal; env = envelope; seismicEnv = true
+                if (results == null) {
+                    results = first
+                    combos = LoadCombination.isLimitState(LoadCase.WL in model.loadCases) + LoadCombination.cases(LoadCase.LL in model.loadCases, LoadCase.WL in model.loadCases)
+                    comboIdx = 0
+                }
+                modeIdx = 0; view = ResultView.MODAL
+            } catch (e: Exception) { message = "Seismic: ${e.message}" } finally { busy = false }
+        }
+    }
+
     fun runBuckling() {
         val c = combos.getOrNull(comboIdx) ?: LoadCombination.isLimitState(false).first()
         busy = true
@@ -378,7 +407,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                             val cs = combos.ifEmpty { LoadCombination.isLimitState(LoadCase.WL in model.loadCases) }
                             val json = withContext(Dispatchers.Default) {
                                 val all = FrameSolver.analyseAll(model, cs)
-                                EngineeringJson.build(model, all, FemReport.envelope(all.map { it.second }), buckling, modal)
+                                EngineeringJson.build(model, all, FemReport.envelope(all.map { it.second }), buckling, modal, seismic = seismic)
                             }
                             shareTextFile(context, "${model.title.replace(' ', '_')}.engineering.json", "application/json", json, "Structura AI — engineering JSON")
                         } catch (e: Exception) { message = "JSON export: ${e.message}" } finally { busy = false }
@@ -398,6 +427,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                         model, results?.let { r -> (combos.getOrNull(comboIdx) ?: LoadCombination.ALL) to r }, env,
                         combos.ifEmpty { LoadCombination.isLimitState(LoadCase.WL in model.loadCases) }, buckling,
                         modal = modal,
+                        seismic = seismic,
                     )
                     shareTextFile(context, "StructuraAI_report.html", "text/html", html, "Structura AI — analysis report")
                 }, label = { Text("↓ HTML report") })
@@ -539,6 +569,13 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 OutlinedButton(onClick = { runBuckling() }, enabled = !busy && model.members.isNotEmpty(), modifier = Modifier.weight(1f)) { Text("Buckling λcr") }
                 OutlinedButton(onClick = { runModal() }, enabled = !busy && model.members.isNotEmpty(), modifier = Modifier.weight(1f)) { Text("♫ Modal") }
             }
+            OutlinedButton(onClick = { showSeismic = !showSeismic }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (showSeismic) "Hide seismic (IS 1893)" else "🌐 Seismic — IS 1893 response spectrum")
+            }
+            if (showSeismic) SeismicCard(
+                eqZ, { eqZ = it }, eqI, { eqI = it }, eqR, { eqR = it }, eqSoil, { eqSoil = it }, eqBuilding, { eqBuilding = it },
+                seismic, busy, onRun = { runSeismic() },
+            )
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Modal mass: DL + LL ×", style = MaterialTheme.typography.labelMedium)
                 listOf(0.25, 0.5).forEach { f -> FilterChip(f == llMass, { llMass = f; modal = null }, { Text("$f") }) }
@@ -590,7 +627,9 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                if (r.model.members.isNotEmpty()) ResultsSummary(r, env, onDesignBeam)
+                if (r.model.members.isNotEmpty()) ResultsSummary(r, env, onDesignBeam,
+                    if (seismicEnv) "Seismic design envelope — 1.5(DL+LL), 1.2(DL+LL±EL), 1.5(DL±EL), 0.9DL±1.5EL (IS 1893 Cl. 6.3.1.2)"
+                    else "Member envelope — all IS 456 ULS combinations")
             }
             Text(
                 "${model.nodes.size} nodes · ${model.members.size} members · ${model.supports.size} supports · " +
@@ -733,6 +772,55 @@ private fun PanelEditor(model: FrameModel, id: Int, results: FrameResults?, onAp
                     onApply(model.copy(panels = model.panels.map { q -> proto.copy(id = q.id, nodes = q.nodes) }), "All panels updated")
                 }) { Text("Apply to all") }
                 OutlinedButton(onClick = onClose) { Text("Close") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun <T> ChipRow(label: String, items: List<Pair<T, String>>, sel: T, on: (T) -> Unit) {
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.labelMedium)
+        items.forEach { (v, l) -> FilterChip(v == sel, { on(v) }, { Text(l) }) }
+    }
+}
+
+@Composable
+private fun SeismicCard(
+    z: Double, onZ: (Double) -> Unit, imp: Double, onI: (Double) -> Unit, r: Double, onR: (Double) -> Unit,
+    soil: Seismic.Soil, onSoil: (Seismic.Soil) -> Unit, bt: Seismic.BuildingType, onBt: (Seismic.BuildingType) -> Unit,
+    res: Seismic.Result?, busy: Boolean, onRun: () -> Unit,
+) {
+    val mono = androidx.compose.ui.text.font.FontFamily.Monospace
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("IS 1893 (Part 1):2016 — response spectrum", fontWeight = FontWeight.SemiBold)
+            ChipRow("Zone", listOf(0.10 to "II (0.10)", 0.16 to "III (0.16)", 0.24 to "IV (0.24)", 0.36 to "V (0.36)"), z, onZ)
+            ChipRow("I", listOf(1.0 to "1.0", 1.2 to "1.2", 1.5 to "1.5"), imp, onI)
+            ChipRow("R", listOf(3.0 to "3 OMRF", 4.0 to "4", 5.0 to "5 SMRF"), r, onR)
+            ChipRow("Soil", Seismic.Soil.entries.map { it to it.label }, soil, onSoil)
+            ChipRow("Ta", Seismic.BuildingType.entries.map { it to it.label }, bt, onBt)
+            Text("Seismic weight uses the modal mass setting above (DL + 25 % / 50 % LL). Modes: 12, CQC, 5 % damping.", style = MaterialTheme.typography.labelSmall)
+            Button(onClick = onRun, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Run response spectrum") }
+            res?.let { s ->
+                for (d in listOf(s.x, s.y)) {
+                    Text("${d.name}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                    Text(" Mode   T (s)  Sa/g     Ah   Mass%   V (kN)", fontFamily = mono, style = MaterialTheme.typography.bodySmall)
+                    d.rows.filter { it.massRatio > 0.001 }.forEach {
+                        Text(String.format(Locale.US, "%4d %7.3f %5.2f %6.4f %6.1f %8.2f", it.mode, it.period, it.saG, it.ah, it.massRatio * 100, it.baseShear),
+                            fontFamily = mono, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text(String.format(Locale.US, "W = %.1f kN · Σ mass %.1f %% · VB(CQC) %.2f kN · Ta %.3f s → VB̄ %.2f kN · scale %.3f → design VB = %.2f kN",
+                        d.weight, d.cumulativeMass * 100, d.baseShearRs, d.ta, d.baseShearStatic, d.scale, d.baseShear),
+                        style = MaterialTheme.typography.bodySmall)
+                    if (d.cumulativeMass < 0.9) Text("⚠ Mass participation < 90 % (Cl. 7.7.5.2) — results use the first 12 modes.", color = FailRed, style = MaterialTheme.typography.labelSmall)
+                    d.drifts.forEach {
+                        Text(String.format(Locale.US, "Storey at Z %.2f m: drift %.5f %s", it.z, it.drift, if (it.ok) "✔ ≤ 0.004" else "✘ > 0.004 (Cl. 7.11.1)"),
+                            color = if (it.ok) MaterialTheme.colorScheme.onSurface else FailRed, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Text("The member envelope below now includes earthquake combinations; the critical beam button uses it. Mode chips show the shapes.",
+                    style = MaterialTheme.typography.labelSmall)
             }
         }
     }

@@ -120,6 +120,13 @@ Same workflow as the Structura AI web version:
 - **{ } Engineering JSON:** the full model plus results for every combination (displacements, reactions, end forces, internal-force stations, panels), the ULS envelope, buckling and modal results, in one machine-readable file.
 - **# STAAD .std export:** a STAAD.Pro input file with joints, members, shells, materials, properties (PRIS / TUBE / PIPE), betas, offsets, supports, releases and springs, load cases (SELFWEIGHT, JOINT, MEMBER UNI/TRAP/CON, ELEMENT PR) and IS 456 combinations, using SET Z UP. Check the import in STAAD.Pro before running.
 
+### Seismic — IS 1893 (Part 1):2016 response spectrum
+- Inputs: zone factor Z (II–V), importance factor I, response reduction factor R, soil type I/II/III, and how Ta is taken (RC / steel MRF formula, 0.09h/√d, or modal T1). Seismic weight is DL + 25 % or 50 % of LL.
+- Sa/g follows Cl. 6.4.2 and Ah = (Z/2)(Sa/g)/(R/I). Peak modal responses are combined by CQC with 5 % damping (Cl. 7.7.5.4).
+- Base shear is scaled up to the static VB̄ = Ah(Ta)·W when lower (Cl. 7.7.3). Storey drift is checked against 0.004 (Cl. 7.11.1).
+- The seismic design envelope covers 1.5(DL+LL), 1.2(DL+LL±EL), 1.5(DL±EL) and 0.9DL±1.5EL with EL in X and Y separately. The 100 % + 30 % orthogonal rule is not applied. The envelope feeds the "design critical beam" button.
+- Verified on a single-mass column against the hand calculation (T = 2π√(m/k), VB = Ah·W), on the scaling rule, and against the code spectrum values.
+
 ## Detail drawing (UCS-based, DXF)
 
 - Every view has its own **named UCS**: `ELEVATION` (origin at the soffit, outer face of the left support), `SECTION_A-A` (origin at the bottom-left corner of the section), and `NOTES`.

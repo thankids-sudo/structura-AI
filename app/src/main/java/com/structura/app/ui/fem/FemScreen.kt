@@ -315,7 +315,7 @@ fun FemScreen(onBack: () -> Unit, onDesignBeam: () -> Unit, onStudio: () -> Unit
 }
 
 @Composable
-internal fun ResultsSummary(r: FrameResults, uls: List<MemberEnvelope>, onDesignBeam: () -> Unit) {
+internal fun ResultsSummary(r: FrameResults, uls: List<MemberEnvelope>, onDesignBeam: () -> Unit, envTitle: String = "Member envelope — all IS 456 ULS combinations") {
     val eq = r.equilibriumError
     val ok = eq.all { abs(it) < 1e-3 * (1 + abs(r.totalLoad[2])) }
     val mono = FontFamily.Monospace
@@ -334,7 +334,7 @@ internal fun ResultsSummary(r: FrameResults, uls: List<MemberEnvelope>, onDesign
         }
     }
     val env = uls.ifEmpty { FemReport.envelope(r) }
-    Text("Member envelope — all IS 456 ULS combinations", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.secondary)
+    Text(envTitle, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.secondary)
     Text(" M#   L(m)   N(kN)  Vz(kN) My+(kNm) My-(kNm)", fontFamily = mono, style = MaterialTheme.typography.bodySmall)
     env.forEach { e ->
         Text(
