@@ -13,12 +13,12 @@ Each step is built, tested and committed separately.
 - [x] 1.5 Isolated footings: bearing, one-way & punching shear, flexure (Cl. 34)
 - [x] 1.5b Footings with uniaxial / biaxial moment: kern check, trapezoidal pressure for flexure and shear
 - [x] Branding: launcher icon (adaptive + legacy), Play Store 512 px icon, logo on Home
-- [ ] 1.6 Loads: IS 875 Part 1/2 dead & imposed, load combinations (Table 18)
+- [x] 1.6 Loads: IS 875 Part 1/2 unit weights, imposed loads, wall/slab loads, partition allowance, LL reduction (Cl. 3.2.1), Table 18
 - [x] 1.7 Bar bending schedule export (CSV / Excel)
 
 ## Phase 2: Steel Design (IS 800:2007)
 - [x] 2.1 Section library: ISMB / ISHB / ISMC / SHS / RHS / CHS / custom I (computed from IS 808 nominal dimensions)
-- [ ] 2.1b Full IS 808 table import (angles, ISLB, ISWB, ~1000 sections with tabulated properties)
+- [x] 2.1b Section table import (CSV from SP 6(1) / IS 808: ISLB, ISWB, ISJB, channels, tubes; tabulated A, I, Z override geometry). Angles: import rejected until angle design (Cl. 7.5) is added
 - [x] 2.2 Laterally supported / unsupported beams (Cl. 8.2), shear (Cl. 8.4), deflection (Table 6)
 - [x] 2.3 Compression members (Cl. 7.1, buckling curves a–d); beam-columns (Cl. 9.3)
 - [x] 2.4 Tension members (Cl. 6); bolted & welded connections (Cl. 10)
@@ -39,12 +39,12 @@ Each step is built, tested and committed separately.
 - [x] 3.3g Q4 flat-shell panels (slabs / walls) with panel mesh and pressure loads
 - [x] 3.3h Indian Standards reference + load assumptions calculators
 - [x] 3.3i STAAD-style floor load transfer to beams, Engineering JSON export, STAAD.Pro .std export
-- [ ] 3.4 AI explains results and sanity-checks them (load path, unusual ratios, missing combinations)
+- [x] 3.4 AI result check: load path, equilibrium, uplift, hanging columns, beam axial, idle members, deflection span/250, drift 0.004h, near-mechanism, proportions, missing cases/combinations — with clauses
 
 ## Phase 4: Drawing → Structure AI
 - [x] 4.1 Import a DXF plan and detect the grid (LINE, LWPOLYLINE, POLYLINE, CIRCLE, blocks; $INSUNITS)
-- [ ] 4.1b PDF / photo of a plan (needs on-device vision — next)
+- [x] 4.1b PDF / photo of a plan: on-device vision (adaptive threshold, morphology, blob detection), scale from one span
 - [x] 4.2 Propose a column and beam layout for the user to edit (tap to remove columns; beams re-proposed)
 - [x] 4.3 Load take-down and preliminary sizing of every member (slab lx/32, beam span/12, columns Cl. 39.3)
 - [x] 4.4 Export the design summary and quantities (CSV); 3D model straight into Studio
-- [ ] 4.4b Direct hand-over to EstimateX / JAUEstimate (SOR item codes)
+- [x] 4.4b Hand-over to EstimateX / JAUEstimate: BOQ .xlsx (Measurement + Abstract with live formulas, bordered) and JSON (schema structura-ai/boq-v1) with the user's SOR codes and rates

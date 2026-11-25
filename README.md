@@ -4,10 +4,10 @@ Android app for structural design to Indian Standards. It has four modules, buil
 
 | # | Module | Codes | Status |
 |---|--------|-------|--------|
-| 1 | **RCC Design**: beam, slab, column, footing, BBS | IS 456, IS 875, IS 1893, SP 16 | **Beam design + UCS detail drawing / DXF done** |
+| 1 | **RCC Design**: beam, slab, column, footing, BBS | IS 456, IS 875, IS 1893, SP 16 | Done |
 | 2 | **Steel Design**: beams, columns, tension members, connections, checks from 3D Studio | IS 800, IS 808, IS 4923 | Done |
-| 3 | **FEM Analysis + AI**: 3D frame FEM (RFEM-style), N/V/M diagrams, deformed shape, AI result check | Direct stiffness method | **3D frame solver done** |
-| 4 | **Drawing → Structure AI**: plan import, grid/column layout, load take-down, member sizing | IS 456, IS 875, IS 13920 | DXF done; PDF/photo next |
+| 3 | **FEM Analysis + AI**: 3D frame FEM (RFEM-style), N/V/M diagrams, deformed shape, AI result check | Direct stiffness method, IS 1893 | Done |
+| 4 | **Drawing → Structure AI**: DXF / PDF / photo plan, grid/column layout, take-down, sizing, BOQ hand-over | IS 456, IS 875, IS 13920 | Done |
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the step-by-step build plan.
 
@@ -122,6 +122,24 @@ Home → "Drawing → Structure AI". Code: `core/plan/` (DxfReader, PlanRecogniz
   - Columns: tributary area × (slab + finishes + LL) + beam self-weight + walls on typical floors + column self-weight, summed from the roof. Pu = 1.5 ΣP × 1.1 / 1.25 / 1.5 (interior / edge / corner, for moment), Ag from Cl. 39.3 with p = 1 %; drawn short side kept (≥ 300 mm, IS 13920), long side deepened.
 - **Model:** fixed at foundation top, first lift = plinth + storey height, beams at every floor, slab DL and LL distributed to beams by the floor-load tool (45° / one-way), walls as beam UDL. Opens in 3D Studio for analysis, RCC/steel checks and reports.
 - **Quantities:** concrete in slabs / beams (below slab, clear spans) / columns, shuttering, built-up area, and steel by allowance (80 / 130 / 180 kg/m³) — replace with BBS after detailed design. CSV export.
+
+## Loads (IS 875 Part 1 & 2)
+Home → RCC → "Loads — IS 875 Part 1 & 2" (`core/loads/IS875.kt`, `ui/loads/LoadsScreen.kt`): imposed loads by occupancy (Table 1, roofs Table 2), unit weights (Table 1; concrete per IS 456 Cl. 19.2.1), slab DL and wu, wall line load with plaster, partition allowance max(1.0, w/3) (Cl. 3.1.2), live-load reduction by floors carried (Cl. 3.2.1, Table 3 — also applied in the plan take-down), IS 456 Table 18 combinations.
+
+## AI result check (3D Studio)
+"✦ Review" (`core/fem/ResultCheck.kt`) analyses all ULS combinations + DL+LL service and reports, with clauses: missing supports/free nodes/self-weight/LL/lateral case or combination (incl. 0.9DL ± 1.5WL), equilibrium, uplift, columns in tension under gravity, beams carrying large axial force, idle members, deflection > span/250 (service, or ULS ÷ 1.5), drift > 0.004 h (IS 1893 Cl. 7.11.1), near-mechanism, span/depth > 20, beam b < 200, slender columns (lex/D > 12), columns < 300 mm. Tap a finding to select the member.
+
+## Section table import (IS 808 / SP 6(1))
+Steel screen → "↑ Import section table (CSV)"; "Template" shares the header. Columns: name, family (I, CHANNEL, SHS, RHS, CHS, WELDED_I), h, b, tf, tw (mm) and optional A, Izz, Iyy, Zez, Zpz, Zey, Zpy, J in mm units or with _cm2/_cm3/_cm4 suffix. The file is kept on the phone and reloaded at start; imported names override built-ins and appear in the steel screen and the Studio section picker (`core/steel/SectionTableImport.kt`). Angles are skipped (not yet designable).
+
+## Plans from PDF / photo
+Drawing → Structure → "↑ PDF plan" (first page, rendered at 2400 px) or "↑ Photo / scan". `core/plan/PlanImageReader.kt`: adaptive threshold (window ≈ image/40) → closing (fills hatching) → opening (removes walls/text thinner than ≈ image/200) → connected components that are compact (aspect ≤ 3.5), well filled (≥ 60 %) and of similar size → columns. Enter the span between grid lines 1 and 2 and tap Apply scale; the rest is the same as DXF. Photos must be square-on; accuracy ± 1 px.
+
+## BOQ hand-over (EstimateX / JAUEstimate)
+After "Take-down & sizes": "SOR codes & rates" (saved on the phone) then
+- **BOQ Excel** — Abstract (SUMIF from Measurement × rate = amount, total), Measurement (Nos × L × B × D formulas per column group, beam, panel; shuttering; steel by allowance), Info. Bordered cells, A4 landscape.
+- **EstimateX JSON** — `schema: structura-ai/boq-v1`: items with key, sorCode, description, unit, quantity, rate, amount and the measurement rows.
+Superstructure only (no foundations, masonry, finishes); steel by allowance until the BBS is made.
 
 ## FEM analysis (RFEM-style 3D frame)
 
