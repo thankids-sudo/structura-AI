@@ -48,6 +48,7 @@ object EngineeringJson {
         buckling: BucklingResult? = null,
         modal: ModalResult? = null,
         stations: Int = 10,
+        seismic: Seismic.Result? = null,
     ): String {
         val root = linkedMapOf<String, Any?>(
             "format" to "structura-ai-engineering",
@@ -104,6 +105,15 @@ object EngineeringJson {
                 mapOf("member" to it.member, "length" to it.length, "N_at_absmax" to it.nAbsMax, "Vz_absmax" to it.vzAbsMax, "My_max" to it.myMax, "My_min" to it.myMin)
             },
             "buckling" to buckling?.let { mapOf("lambdaCr" to it.lambda, "combination" to it.combination, "elementsPerMember" to it.segmentsPerMember) },
+            "seismicIS1893" to seismic?.let { s ->
+                mapOf("Z" to s.params.z, "I" to s.params.importance, "R" to s.params.r, "soil" to s.params.soil.name, "height" to s.height,
+                    "directions" to listOf(s.x, s.y).map { d ->
+                        mapOf("name" to d.name, "W_kN" to d.weight, "VB_cqc_kN" to d.baseShearRs, "Ta_s" to d.ta, "VB_static_kN" to d.baseShearStatic,
+                            "scale" to d.scale, "VB_design_kN" to d.baseShear,
+                            "modes" to d.rows.map { mapOf("mode" to it.mode, "T_s" to it.period, "SaG" to it.saG, "Ah" to it.ah, "massRatio" to it.massRatio, "VB_kN" to it.baseShear) },
+                            "drifts" to d.drifts.map { mapOf("z" to it.z, "h" to it.height, "drift" to it.drift, "ok" to it.ok) })
+                    })
+            },
             "modal" to modal?.let { md ->
                 mapOf("massSource" to md.massSource, "totalMass_t" to md.totalMass, "cumulativeParticipation" to md.cumulative,
                     "modes" to md.modes.map { mapOf("mode" to it.number, "f_Hz" to it.frequency, "T_s" to it.period, "participation" to it.participation) })
