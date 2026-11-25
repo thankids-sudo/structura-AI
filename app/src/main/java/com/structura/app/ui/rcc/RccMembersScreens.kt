@@ -207,14 +207,6 @@ fun ColumnScreen(onBack: () -> Unit) = RccScaffold("RCC Column — IS 456", onBa
         Field("Bar φ", dia, Modifier.weight(1f)) { dia = it }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Field("M along L (kN·m)", ml, Modifier.weight(1f)) { ml = it }
-        Field("Mu along L", mlu, Modifier.weight(1f)) { mlu = it }
-        Field("M along B (kN·m)", mb, Modifier.weight(1f)) { mb = it }
-        Field("Mu along B", mbu, Modifier.weight(1f)) { mbu = it }
-    }
-    Text("Moments: service for sizing (qmax ≤ SBC, no tension), factored for design. Mu 0 → 1.5 × M. L is along column D.",
-        style = MaterialTheme.typography.labelSmall)
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Field("Bars on b-face", nb, Modifier.weight(1f)) { nb = it }
         Field("Bars on D-face", nd, Modifier.weight(1f)) { nd = it }
         Field("fck", fck, Modifier.weight(1f)) { fck = it }
@@ -278,6 +270,14 @@ fun FootingScreen(onBack: () -> Unit) = RccScaffold("Isolated footing — IS 456
         Field("fy", fy, Modifier.weight(1f)) { fy = it }
         Field("Bar φ", dia, Modifier.weight(1f)) { dia = it }
     }
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Field("M along L (kN·m)", ml, Modifier.weight(1f)) { ml = it }
+        Field("Mu along L", mlu, Modifier.weight(1f)) { mlu = it }
+        Field("M along B (kN·m)", mb, Modifier.weight(1f)) { mb = it }
+        Field("Mu along B", mbu, Modifier.weight(1f)) { mbu = it }
+    }
+    Text("Moments: service for sizing (qmax ≤ SBC, no tension), factored for design. Mu 0 → 1.5 × M. L is along column D.",
+        style = MaterialTheme.typography.labelSmall)
     Button(onClick = {
         err = null
         runCatching {
