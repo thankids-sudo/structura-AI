@@ -272,7 +272,10 @@ object LoadCase {
     const val DL = "DL"      // dead load (IS 875 Part 1)
     const val LL = "LL"      // imposed load (IS 875 Part 2)
     const val WL = "WL"      // wind / lateral (IS 875 Part 3) or EL (IS 1893)
-    const val TAP = "TAP"    // interactive loads applied on screen
+    const val TAP = "TAP"
+    /** Seismic X / Y (IS 1893 static) — combined by the 100 % + 30 % rule, Cl. 6.3.4.1. */
+    const val EX = "EX"
+    const val EY = "EY"    // interactive loads applied on screen
 }
 
 /** Concentrated load at a node in global axes: Fx, Fy, Fz (kN), Mx, My, Mz (kN·m). */
@@ -349,6 +352,34 @@ data class LoadCombination(val name: String, val factors: Map<String, Double>, v
                 list += LoadCombination("0.9DL−1.5WL", mapOf(LoadCase.DL to 0.9, LoadCase.WL to -1.5))
             }
             return list
+        }
+
+        /**
+         * IS 1893 (Part 1):2016 Cl. 6.3.2.2 combinations with EL = ±EX ± 0.3EY and ±EY ± 0.3EX (Cl. 6.3.4.1):
+         * 1.5(DL+LL), 1.2(DL+LL±EL), 1.5(DL±EL), 0.9DL ± 1.5EL — 25 combinations.
+         */
+        fun seismic100_30(): List<LoadCombination> {
+            val dirs = listOf(1.0 to 0.3, 1.0 to -0.3, -1.0 to 0.3, -1.0 to -0.3).flatMap { (a, b) -> listOf(a to b, b to a) }
+            fun el(x: Double, y: Double): String {
+                fun t(v: Double, c: String) = (if (v < 0) "−" else "+") + (if (kotlin.math.abs(v) == 1.0) "" else "0.3") + c
+                return t(x, "EX") + t(y, "EY")
+            }
+            val list = arrayListOf(LoadCombination("1.5(DL+LL)", mapOf(LoadCase.DL to 1.5, LoadCase.LL to 1.5)))
+            for ((x, y) in dirs) list += LoadCombination("1.2(DL+LL${el(x, y)})", mapOf(LoadCase.DL to 1.2, LoadCase.LL to 1.2, LoadCase.EX to 1.2 * x, LoadCase.EY to 1.2 * y))
+            for ((x, y) in dirs) list += LoadCombination("1.5(DL${el(x, y)})", mapOf(LoadCase.DL to 1.5, LoadCase.EX to 1.5 * x, LoadCase.EY to 1.5 * y))
+            for ((x, y) in dirs) list += LoadCombination("0.9DL+1.5(${el(x, y).removePrefix("+")})", mapOf(LoadCase.DL to 0.9, LoadCase.EX to 1.5 * x, LoadCase.EY to 1.5 * y))
+            return list
+        }
+
+        /** Combinations for a model: IS 1893 100 %/30 % set when EX/EY cases exist, plus wind (WL) combinations when WL exists. */
+        fun forModel(cases: Set<String>): List<LoadCombination> {
+            val seismic = LoadCase.EX in cases || LoadCase.EY in cases
+            val wind = LoadCase.WL in cases
+            return when {
+                seismic && wind -> seismic100_30() + isLimitState(true).drop(1)
+                seismic -> seismic100_30()
+                else -> isLimitState(wind)
+            }
         }
 
         /** Single load cases × 1.0 (service level, for deflection). */

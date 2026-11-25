@@ -138,6 +138,7 @@ internal fun LateralPanel(model: FrameModel, onApply: (FrameModel, String) -> Un
     var terrain by remember { mutableStateOf(2) }
     var cf by remember { mutableStateOf("1.2") }
     var table by remember { mutableStateOf<String?>(null) }
+    var ecc by remember { mutableStateOf(1) }      // 0 none, 1 +5 %, 2 −5 %
     val zones = listOf("II" to 0.10, "III" to 0.16, "IV" to 0.24, "V" to 0.36)
     fun apply(res: LateralLoads.Result, what: String) {
         val kept = model.nodalLoads.filter { it.case != LoadCase.WL }
@@ -159,6 +160,21 @@ internal fun LateralPanel(model: FrameModel, onApply: (FrameModel, String) -> Un
                     runCatching { LateralLoads.seismicStatic(model, Seismic.Params(z = zones[zone].second, importance = d(imp, 1.0), r = d(r, 5.0), soil = soil), axis) }
                         .onSuccess { apply(it, "IS 1893 static") }.onFailure { table = it.message }
                 }, modifier = Modifier.weight(1.4f)) { Text("Seismic VB = Ah·W") }
+            }
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                listOf("No ecc.", "+5 % ecc.", "−5 % ecc.").forEachIndexed { i, l -> FilterChip(i == ecc, { ecc = i }, { Text(l) }) }
+                OutlinedButton(onClick = {
+                    runCatching {
+                        val pp = Seismic.Params(z = zones[zone].second, importance = d(imp, 1.0), r = d(r, 5.0), soil = soil)
+                        val e = listOf(0.0, 0.05, -0.05)[ecc]
+                        val ex = LateralLoads.seismicStatic(model, pp, 0, case = LoadCase.EX, eccentricity = e)
+                        val ey = LateralLoads.seismicStatic(model, pp, 1, case = LoadCase.EY, eccentricity = e)
+                        val kept = model.nodalLoads.filter { it.case != LoadCase.EX && it.case != LoadCase.EY }
+                        onApply(model.copy(nodalLoads = kept + ex.loads + ey.loads),
+                            "IS 1893 EX = ${"%.1f".format(ex.baseShear)} kN, EY = ${"%.1f".format(ey.baseShear)} kN; 25 combinations with EL = ±EX ± 0.3EY, ±EY ± 0.3EX (Cl. 6.3.4.1)")
+                        table = (ex.steps + ey.steps.takeLast(1)).joinToString("\n")
+                    }.onFailure { table = it.message }
+                }) { Text("EX + EY (100 % + 30 %)") }
             }
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 (1..4).forEach { t -> FilterChip(t == terrain, { terrain = t }, { Text("Terrain $t") }) }

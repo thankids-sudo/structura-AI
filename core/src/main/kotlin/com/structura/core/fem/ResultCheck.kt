@@ -55,7 +55,7 @@ object ResultCheck {
         if (LoadCase.LL !in cases) f += Finding(Level.INFO, "Imposed load", "No live (LL) load case — floors and roofs normally carry imposed load.", "IS 875 Part 2, Table 1")
         val zs = model.nodes.map { it.z }
         val tall = (zs.maxOrNull() ?: 0.0) - (zs.minOrNull() ?: 0.0) > 3.5
-        if (tall && LoadCase.WL !in cases) f += Finding(Level.WARN, "Lateral load",
+        if (tall && LoadCase.WL !in cases && LoadCase.EX !in cases && LoadCase.EY !in cases) f += Finding(Level.WARN, "Lateral load",
             "Building frame without any lateral (wind / seismic) case. Every building must be checked for IS 875 Part 3 wind and IS 1893 earthquake — use the seismic card in Studio.",
             "IS 875-3; IS 1893-1 Cl. 6.3")
         val names = results.map { it.first }

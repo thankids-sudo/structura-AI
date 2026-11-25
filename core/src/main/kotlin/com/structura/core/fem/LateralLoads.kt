@@ -43,11 +43,22 @@ object LateralLoads {
         return zBase to lv
     }
 
-    private fun spread(level: List<Int>, force: Double, axis: Int, weights: Map<Int, Double>): List<NodalLoad> {
-        val tot = level.sumOf { weights[it] ?: 0.0 }
+    /**
+     * Distributes a storey force to the level's nodes by weight. With [ecc] ≠ 0 (fraction of the plan dimension
+     * normal to the force, e.g. ±0.05 for IS 1893 Cl. 7.8.2) the resultant is moved off the centre of mass:
+     * Fn = Q·wn/W + Q·e·wn·(cn − c̄)/Σw(c − c̄)², so ΣFn = Q and ΣFn·(cn − c̄) = Q·e.
+     */
+    private fun spread(model: FrameModel, level: List<Int>, force: Double, axis: Int, weights: Map<Int, Double>, case: String, ecc: Double = 0.0): List<NodalLoad> {
+        val w = level.associateWith { (weights[it] ?: 0.0).takeIf { v -> v > 0 } ?: 1e-9 }
+        val tot = w.values.sum()
+        fun c(n: Int) = model.node(n).let { if (axis == 0) it.y else it.x }
+        val cBar = level.sumOf { w.getValue(it) * c(it) } / tot
+        val j = level.sumOf { w.getValue(it) * (c(it) - cBar) * (c(it) - cBar) }
+        val b = level.map { c(it) }.let { (it.max() - it.min()) }
+        val e = ecc * b
         return level.map { n ->
-            val share = if (tot > 0) (weights[n] ?: 0.0) / tot else 1.0 / level.size
-            NodalLoad(n, List(6) { if (it == axis) force * share else 0.0 }, LoadCase.WL)
+            val share = w.getValue(n) / tot + if (j > 1e-12 && e != 0.0) e * w.getValue(n) * (c(n) - cBar) / j else 0.0
+            NodalLoad(n, List(6) { if (it == axis) force * share else 0.0 }, case)
         }.filter { abs(it.values[axis]) > 0 }
     }
 
@@ -56,7 +67,8 @@ object LateralLoads {
      * VB = Ah·W (Cl. 7.2.1), Qi = VB·Wi·hi² / ΣWj·hj² (Cl. 7.6.3) along global [axis] (0 = X, 1 = Y).
      * Accidental eccentricity (Cl. 7.8.2) is not applied.
      */
-    fun seismicStatic(model: FrameModel, p: Seismic.Params, axis: Int = 0, period: Double? = null): Result {
+    fun seismicStatic(model: FrameModel, p: Seismic.Params, axis: Int = 0, period: Double? = null,
+                      case: String = LoadCase.WL, eccentricity: Double = 0.0): Result {
         val wN = nodalWeights(model, p.llFactor)
         val (zBase, lv) = levels(model, wN)
         require(lv.isNotEmpty()) { "No floor levels above the supports" }
@@ -73,12 +85,13 @@ object LateralLoads {
         val vb = ah * wTot
         val den = lv.indices.sumOf { ws[it] * (lv[it].first - zBase).pow(2) }
         val storeys = lv.indices.map { k -> Storey(lv[k].first, ws[k], vb * ws[k] * (lv[k].first - zBase).pow(2) / den) }
-        val loads = lv.indices.flatMap { k -> spread(lv[k].second, storeys[k].force, axis, wN) }
+        val loads = lv.indices.flatMap { k -> spread(model, lv[k].second, storeys[k].force, axis, wN, case, eccentricity) }
         val steps = listOf(
             "h = ${"%.2f".format(h)} m, Ta = ${"%.3f".format(ta)} s (Cl. 7.6.2), Sa/g = ${"%.3f".format(Seismic.saByG(ta, p.soil, true))} (soil ${p.soil.name})",
             "Ah = Z/2 · I/R · Sa/g = ${p.z}/2 × ${p.importance}/${p.r} × … = ${"%.5f".format(ah)} (Cl. 6.4.2)",
             "W = DL + ${p.llFactor}·LL = ${"%.1f".format(wTot)} kN (Cl. 7.3.1, Table 10); VB = Ah·W = ${"%.2f".format(vb)} kN (Cl. 7.2.1)",
-            "Qi = VB·Wi·hi²/ΣWj·hj² (Cl. 7.6.3), applied along ${if (axis == 0) "X" else "Y"} in case WL",
+            "Qi = VB·Wi·hi²/ΣWj·hj² (Cl. 7.6.3), applied along ${if (axis == 0) "X" else "Y"} in case $case" +
+                if (eccentricity != 0.0) ", accidental eccentricity ${"%+.0f".format(eccentricity * 100)} % of the plan dimension (Cl. 7.8.2)" else "",
         )
         return Result(vb, storeys, loads, steps)
     }
@@ -129,7 +142,7 @@ object LateralLoads {
             val pd = maxOf(w.kd * w.ka * w.kc, 0.7) * pz
             Storey(lv[k].first, pd, w.cf * pd * width * trib)
         }
-        val loads = lv.indices.flatMap { k -> spread(lv[k].second, storeys[k].force, axis, wN) }
+        val loads = lv.indices.flatMap { k -> spread(model, lv[k].second, storeys[k].force, axis, wN, LoadCase.WL) }
         val vb = storeys.sumOf { it.force }
         val steps = listOf(
             "Vz = Vb·k1·k2·k3·k4 with Vb = ${w.vb} m/s, terrain category ${w.terrain} (Table 2), k1 ${w.k1}, k3 ${w.k3}, k4 ${w.k4}",

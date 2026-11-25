@@ -66,6 +66,25 @@ object SteelModelCheck {
         val out = ArrayList<MemberCheck>()
         for (m in model.members) {
             if (!isSteel(m.material)) continue
+            if (m.section.shape == "ANGLE") {                       // single angles: axial checks (Cl. 6, 7.5.1.2)
+                val g0 = grade(m.material)
+                val l0 = (model.node(m.j).pos - model.node(m.i).pos).length * 1000
+                val (b0, d0, t0) = AngleDesign.dims(m.section.b, m.section.h, m.section.t)
+                var best0: MemberCheck? = null
+                for ((c, r) in results) {
+                    val st = r.internalForces(m.id, 8)
+                    val comp = st.maxOf { -it.n }.coerceAtLeast(0.0); val tens = st.maxOf { it.n }.coerceAtLeast(0.0)
+                    val res = AngleDesign.check(maxOf(b0, d0), minOf(b0, d0), t0, g0, tens, comp, k * l0, name = m.section.name)
+                    val mMaj = st.maxOf { abs(it.my) }; val mMin = st.maxOf { abs(it.mz) }
+                    val extra = if (!m.truss && (mMaj > 1e-6 || mMin > 1e-6)) listOf(DesignCheck("Bending in angle", "M = ${"%.2f".format(maxOf(mMaj, mMin))} kN·m",
+                        "angles designed for axial force — model as truss or check bending separately", Status.INFO, "IS 800:2007 Cl. 9.3")) else emptyList()
+                    val mc = MemberCheck(m.id, m.section.name, g0.name, c.name, res.utilisation, if (comp >= tens) comp else -tens, mMaj, mMin,
+                        st.maxOf { abs(it.vz) }, SteelResult(res.capacity, res.utilisation, res.checks + extra, res.steps))
+                    if (best0 == null || mc.utilisation > best0.utilisation) best0 = mc
+                }
+                best0?.let { out += it }
+                continue
+            }
             val s = steelSection(m.section) ?: continue
             val g = grade(m.material)
             val l = (model.node(m.j).pos - model.node(m.i).pos).length * 1000

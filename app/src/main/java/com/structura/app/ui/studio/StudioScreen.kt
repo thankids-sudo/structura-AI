@@ -291,7 +291,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
         scope.launch {
             try {
                 val lat = LoadCase.WL in model.loadCases
-                val combos = LoadCombination.isLimitState(lat) + LoadCombination.cases(LoadCase.LL in model.loadCases, lat).filter { it.name.contains("service") }
+                val combos = LoadCombination.forModel(model.loadCases) + LoadCombination.cases(LoadCase.LL in model.loadCases, lat).filter { it.name.contains("service") }
                 aiReview = withContext(Dispatchers.Default) {
                     val res = if (model.supports.isEmpty()) emptyList() else FrameSolver.analyseAll(model, combos)
                     com.structura.core.fem.ResultCheck.review(model, res)
@@ -313,7 +313,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
         busy = true; message = null
         scope.launch {
             try {
-                val uls = LoadCombination.isLimitState(LoadCase.WL in model.loadCases)
+                val uls = LoadCombination.forModel(model.loadCases)
                 steel = withContext(Dispatchers.Default) {
                     SteelModelCheck.check(model, FrameSolver.analyseAll(model, uls), steelK, steelLlt).sortedByDescending { it.utilisation }
                 }
@@ -334,7 +334,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
             try {
                 val withLive = LoadCase.LL in model.loadCases
                 val withLat = LoadCase.WL in model.loadCases
-                val uls = LoadCombination.isLimitState(withLat)
+                val uls = LoadCombination.forModel(model.loadCases)
                 val list = uls + LoadCombination.cases(withLive, withLat)
                 val (first, envelope) = withContext(Dispatchers.Default) {
                     val all = FrameSolver.analyseAll(model, uls).map { it.second }
@@ -454,7 +454,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                     busy = true
                     scope.launch {
                         try {
-                            val cs = combos.ifEmpty { LoadCombination.isLimitState(LoadCase.WL in model.loadCases) }
+                            val cs = combos.ifEmpty { LoadCombination.forModel(model.loadCases) }
                             val json = withContext(Dispatchers.Default) {
                                 val all = FrameSolver.analyseAll(model, cs)
                                 EngineeringJson.build(model, all, FemReport.envelope(all.map { it.second }), buckling, modal, seismic = seismic, steel = steel)
@@ -475,7 +475,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 AssistChip(onClick = {
                     val html = HtmlReport.build(
                         model, results?.let { r -> (combos.getOrNull(comboIdx) ?: LoadCombination.ALL) to r }, env,
-                        combos.ifEmpty { LoadCombination.isLimitState(LoadCase.WL in model.loadCases) }, buckling,
+                        combos.ifEmpty { LoadCombination.forModel(model.loadCases) }, buckling,
                         modal = modal,
                         seismic = seismic,
                         steel = steel,
