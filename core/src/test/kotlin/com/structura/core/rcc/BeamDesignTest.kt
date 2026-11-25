@@ -57,21 +57,20 @@ class BeamDesignTest {
     }
 
     @Test
-    fun doublyReinforced_Fe415_flagsBarSpacing() {
-        val r = BeamDesigner.design(
-            BeamInput(
-                widthB = 300.0, overallDepthD = 500.0, mainBarDia = 20.0, compBarDia = 16.0,
-                effectiveSpan = 6000.0, fck = 25.0, fy = 415.0,
-                factoredMoment = 260.0, factoredShear = 150.0,
-            )
+    fun doublyReinforced_Fe415_goesToTwoLayers() {
+        val inp = BeamInput(
+            widthB = 300.0, overallDepthD = 500.0, mainBarDia = 20.0, compBarDia = 16.0,
+            effectiveSpan = 6000.0, fck = 25.0, fy = 415.0,
+            factoredMoment = 260.0, factoredShear = 150.0,
         )
-        near(216.102, r.muLim)
-        near(309.09, r.ascRequired, 0.01)
-        near(1932.69, r.astRequired, 0.005)
-        assertEquals(7, r.tensionBars.count)
-        val spacing = r.checks.first { it.clause.contains("26.3.2") }
-        assertEquals(Status.FAIL, spacing.status)        // 7-20φ do not fit one layer in 300 mm
-        assertFalse(r.isSafe)
+        val r = BeamDesigner.design(inp)
+        assertEquals(2, r.layers.size)                                  // 7-20φ do not fit one 300 mm layer
+        assertEquals(BeamDesigner.barsPerLayer(inp), r.layers[0])
+        // d to the bar centroid: y1 = 25+8+10 = 43; gap = max(20, 15, 13.3) = 20; y2 = 43 + 20 + 20 = 83
+        val n = r.tensionBars.count; val n1 = r.layers[0]
+        assertEquals(500.0 - (n1 * 43.0 + (n - n1) * 83.0) / n, r.effectiveDepth, 1e-9)
+        assertEquals(Status.PASS, r.checks.first { it.clause.contains("26.3.2(a)") }.status)
+        assertTrue(r.tensionBars.count >= 7)
     }
 
     @Test
