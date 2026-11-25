@@ -29,7 +29,11 @@ class RemainingGapsTest {
         assertTrue(fixed2.capacity > hinged2.capacity && fixed2.capacity > fixed1.capacity)
         val t2 = AngleDesign.check(60.0, 60.0, 6.0, g, 100.0, 0.0, 1500.0, bolts = 2, holeDia = 18.0)
         val an = p.area - 18 * 6
-        assertEquals(minOf(p.area * 250 / 1.1, 0.6 * an * 410 / 1.25) / 1000, t2.capacity, 1e-9)
+        // block shear, one line of 2 bolts: p = 40, e = 30.6, g = 33 mm
+        val avg = (30.6 + 40) * 6; val avn = avg - 1.5 * 18 * 6; val atg = (60 - 33.0) * 6; val atn = atg - 0.5 * 18 * 6
+        val tdb = minOf(avg * 250 / (Math.sqrt(3.0) * 1.1) + 0.9 * atn * 410 / 1.25, 0.9 * avn * 410 / (Math.sqrt(3.0) * 1.25) + atg * 250 / 1.1)
+        println("[Angle] Tdg ${p.area * 250 / 1.1 / 1000}, Tdn ${0.6 * an * 410 / 1.25 / 1000}, Tdb ${tdb / 1000} kN")
+        assertEquals(minOf(p.area * 250 / 1.1, 0.6 * an * 410 / 1.25, tdb) / 1000, t2.capacity, 1e-9)
         val t4 = AngleDesign.check(60.0, 60.0, 6.0, g, 100.0, 0.0, 1500.0, bolts = 4)
         assertTrue(t4.capacity > t2.capacity)
     }

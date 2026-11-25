@@ -431,8 +431,9 @@ object FrameSolver {
             fun map(local: Int): List<Pair<Int, Double>> = when (local) {
                 0 -> (0 until 3).map { ri + it to ev[it] }
                 2 -> (0 until 3).map { rj + it to ev[it] }
-                1 -> listOf(wIndex[m.i]!! to (if ((wRef[m.i]!! dot e) >= 0) 1.0 else -1.0))
-                else -> listOf(wIndex[m.j]!! to (if ((wRef[m.j]!! dot e) >= 0) 1.0 else -1.0))
+                // θ = dφ/dx is invariant under member reversal (φ and x both change sign), so no sign flip
+                1 -> listOf(wIndex[m.i]!! to 1.0)
+                else -> listOf(wIndex[m.j]!! to 1.0)
             }
             for (a in keep) for (b in keep) for ((ga, ca) in map(a)) for ((gb, cb) in map(b)) k[ga][gb] += kc[a][b] * ca * cb
         }
@@ -563,7 +564,7 @@ object FrameSolver {
                 val phi2 = e.x * u[rot(m.j)] + e.y * u[rot(m.j) + 1] + e.z * u[rot(m.j) + 2]
                 fun th(n: Int, restr: Boolean, cont: Boolean): Double? = when {
                     restr -> 0.0
-                    cont -> u[wIndex[n]!!] * (if ((wRef[n]!! dot e) >= 0) 1.0 else -1.0)
+                    cont -> u[wIndex[n]!!]
                     else -> null
                 }
                 val t1 = th(m.i, m.warpI, m.warpContI); val t2 = th(m.j, m.warpJ, m.warpContJ)

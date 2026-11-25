@@ -170,6 +170,9 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
     var steelLlt by remember { mutableStateOf(1.0) }
 
     fun d(s: String, def: Double = 0.0) = s.replace(',', '.').toDoubleOrNull() ?: def
+    fun dL(s: String, def: Double = 0.0) = d(s, def) * com.structura.app.Units.len
+    fun dF(s: String) = d(s) * com.structura.app.Units.force
+    fun dW(s: String) = d(s) * com.structura.app.Units.udl
 
     fun commit(m: FrameModel, msg: String? = null) {
         history = (history.take(pos + 1) + m).takeLast(80)
@@ -179,7 +182,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
         message = msg
     }
 
-    val wp = WorkPlane(plane, d(offset), d(snapTxt, 1.0).coerceAtLeast(0.05), visible = tool != Tool.SELECT || model.nodes.isEmpty())
+    val wp = WorkPlane(plane, dL(offset), dL(snapTxt, 1.0).coerceAtLeast(0.05), visible = tool != Tool.SELECT || model.nodes.isEmpty())
 
     fun material() = spec.material()
     fun section() = spec.section()
@@ -219,15 +222,15 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                     if (now == want) "Support removed at N$id" else "${want.name.lowercase()} support at N$id")
             }
             Tool.LOAD -> t.node?.let { id ->
-                commit(ModelEditor.addNodalLoad(model, id, Vec3(d(fx), d(fy), d(fz)), case), "$case nodal load at N$id")
+                commit(ModelEditor.addNodalLoad(model, id, Vec3(dF(fx), dF(fy), dF(fz)), case), "$case nodal load at N$id")
             }
             Tool.UDL -> t.member?.let { id ->
                 val mem = model.members.first { it.id == id }
                 val len = (model.node(mem.j).pos - model.node(mem.i).pos).length
                 val load = when (loadShape) {
-                    "Partial" -> MemberLoad(id, loadDir, d(q), case, d(la).coerceIn(0.0, len), d(lb).coerceIn(0.0, len))
-                    "Trapezoid" -> MemberLoad(id, loadDir, d(q), case, d(la).coerceIn(0.0, len), d(lb, len).coerceIn(0.0, len), d(q2))
-                    else -> MemberLoad(id, loadDir, d(q), case)
+                    "Partial" -> MemberLoad(id, loadDir, dW(q), case, dL(la).coerceIn(0.0, len), dL(lb).coerceIn(0.0, len))
+                    "Trapezoid" -> MemberLoad(id, loadDir, dW(q), case, dL(la).coerceIn(0.0, len), dL(lb, len / com.structura.app.Units.len).coerceIn(0.0, len), dW(q2))
+                    else -> MemberLoad(id, loadDir, dW(q), case)
                 }
                 if (load.a != null && load.b != null && load.b!! <= load.a!!) { message = "Load end b must be after start a (member length ${fmt(len)} m)"; return }
                 commit(model.copy(memberLoads = model.memberLoads + load), "$case $loadShape load on M$id")
@@ -253,7 +256,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
             }
             Tool.FLOOR -> {
                 val nid = t.node ?: run { message = "Tap a node."; return }
-                val qv = d(floorQ)
+                val qv = d(floorQ) * com.structura.app.Units.area
                 if (floorByLevel) {
                     val z = model.node(nid).z
                     val r = runCatching { FloorLoad.applyToLevel(model, z, qv, case, floorMode) }.getOrElse { message = it.message; return }
@@ -447,6 +450,9 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 AssistChip(onClick = { panelOpen = if (panelOpen == 1) 0 else 1 }, label = { Text("Benchmarks / trusses") })
                 AssistChip(onClick = { panelOpen = if (panelOpen == 2) 0 else 2 }, label = { Text("⇉ Repeat") })
                 AssistChip(onClick = { panelOpen = if (panelOpen == 3) 0 else 3 }, label = { Text("≋ IS 1893 / wind") })
+                val ctxU = androidx.compose.ui.platform.LocalContext.current
+                FilterChip(com.structura.app.Units.imperial, { com.structura.app.Units.set(ctxU, !com.structura.app.Units.imperial); message = if (com.structura.app.Units.imperial) "Imperial input: ft, kip, kip/ft, psf (stored and analysed in SI)" else "SI input: m, kN" },
+                    { Text(if (com.structura.app.Units.imperial) "Units: ft·kip" else "Units: m·kN") })
                 AssistChip(onClick = onStandards, label = { Text("🇮🇳 Indian Standards") })
                 AssistChip(onClick = { saveLauncher.launch("${model.title.replace(' ', '_')}.structura.json") }, label = { Text("↓ Save project") })
                 AssistChip(onClick = { openLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }, label = { Text("↑ Open project") })
@@ -546,8 +552,8 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                     Plane.entries.forEach { p -> FilterChip(p == plane, { plane = p }, { Text(p.label) }) }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Num("Offset (m)", offset, Modifier.weight(1f)) { offset = it }
-                    Num("Snap (m)", snapTxt, Modifier.weight(1f)) { snapTxt = it }
+                    Num("Offset (${com.structura.app.Units.L})", offset, Modifier.weight(1f)) { offset = it }
+                    Num("Snap (${com.structura.app.Units.L})", snapTxt, Modifier.weight(1f)) { snapTxt = it }
                 }
                 if (tool == Tool.MEMBER) SectionPicker(spec)
             }
@@ -558,7 +564,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                     FloorLoad.Mode.entries.forEach { md -> FilterChip(md == floorMode, { floorMode = md }, { Text(md.label) }) }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Num("q (kN/m², − = down)", floorQ, Modifier.weight(1f)) { floorQ = it }
+                    Num("q (${com.structura.app.Units.P}, − = down)", floorQ, Modifier.weight(1f)) { floorQ = it }
                     listOf(LoadCase.DL, LoadCase.LL, LoadCase.WL).forEach { c -> FilterChip(c == case, { case = c }, { Text(c) }) }
                 }
                 Text("Two-way: 45° yield lines → triangles on short beams, trapezoids on long beams. One-way: q·lx/2 on each long beam. " +
@@ -572,15 +578,15 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (tool == Tool.LOAD) {
-                        Num("Fx (kN)", fx, Modifier.weight(1f)) { fx = it }
-                        Num("Fy (kN)", fy, Modifier.weight(1f)) { fy = it }
-                        Num("Fz (kN)", fz, Modifier.weight(1f)) { fz = it }
+                        Num("Fx (${com.structura.app.Units.F})", fx, Modifier.weight(1f)) { fx = it }
+                        Num("Fy (${com.structura.app.Units.F})", fy, Modifier.weight(1f)) { fy = it }
+                        Num("Fz (${com.structura.app.Units.F})", fz, Modifier.weight(1f)) { fz = it }
                     } else {
-                        Num(if (loadShape == "Trapezoid") "q at a (kN/m)" else "q (kN/m)", q, Modifier.weight(1f)) { q = it }
-                        if (loadShape == "Trapezoid") Num("q at b (kN/m)", q2, Modifier.weight(1f)) { q2 = it }
+                        Num(if (loadShape == "Trapezoid") "q at a (${com.structura.app.Units.W})" else "q (${com.structura.app.Units.W})", q, Modifier.weight(1f)) { q = it }
+                        if (loadShape == "Trapezoid") Num("q at b (${com.structura.app.Units.W})", q2, Modifier.weight(1f)) { q2 = it }
                         if (loadShape != "Uniform") {
-                            Num("a (m)", la, Modifier.weight(0.8f)) { la = it }
-                            Num("b (m)", lb, Modifier.weight(0.8f)) { lb = it }
+                            Num("a (${com.structura.app.Units.L})", la, Modifier.weight(0.8f)) { la = it }
+                            Num("b (${com.structura.app.Units.L})", lb, Modifier.weight(0.8f)) { lb = it }
                         }
                     }
                 }
@@ -717,17 +723,18 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
 @Composable
 private fun NodeEditor(model: FrameModel, id: Int, onApply: (FrameModel, String) -> Unit, onClose: () -> Unit) {
     val n = model.node(id)
-    var x by remember(id, n) { mutableStateOf(fmt(n.x)) }
-    var y by remember(id, n) { mutableStateOf(fmt(n.y)) }
-    var z by remember(id, n) { mutableStateOf(fmt(n.z)) }
+    val ul = com.structura.app.Units.len
+    var x by remember(id, n, ul) { mutableStateOf(fmt(n.x / ul)) }
+    var y by remember(id, n, ul) { mutableStateOf(fmt(n.y / ul)) }
+    var z by remember(id, n, ul) { mutableStateOf(fmt(n.z / ul)) }
     val sup = ModelEditor.supportType(model, id)
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Node N$id", fontWeight = FontWeight.SemiBold)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Num("X (m)", x, Modifier.weight(1f)) { x = it }
-                Num("Y (m)", y, Modifier.weight(1f)) { y = it }
-                Num("Z (m)", z, Modifier.weight(1f)) { z = it }
+                Num("X (${com.structura.app.Units.L})", x, Modifier.weight(1f)) { x = it }
+                Num("Y (${com.structura.app.Units.L})", y, Modifier.weight(1f)) { y = it }
+                Num("Z (${com.structura.app.Units.L})", z, Modifier.weight(1f)) { z = it }
             }
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 SupportType.entries.forEach { t ->
@@ -742,7 +749,7 @@ private fun NodeEditor(model: FrameModel, id: Int, onApply: (FrameModel, String)
             )
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedButton(onClick = {
-                    val p = Vec3(x.toDoubleOrNull() ?: n.x, y.toDoubleOrNull() ?: n.y, z.toDoubleOrNull() ?: n.z)
+                    val p = Vec3(x.toDoubleOrNull()?.times(ul) ?: n.x, y.toDoubleOrNull()?.times(ul) ?: n.y, z.toDoubleOrNull()?.times(ul) ?: n.z)
                     onApply(ModelEditor.moveNode(model, id, p), "N$id moved")
                 }) { Text("Move") }
                 if (loads.isNotEmpty()) OutlinedButton(onClick = { onApply(ModelEditor.clearLoadsAtNode(model, id), "Loads at N$id cleared") }) { Text("Clear loads") }
@@ -783,6 +790,12 @@ private fun MemberEditor(model: FrameModel, id: Int, onApply: (FrameModel, Strin
                     Text("  Warping fixed i   ", style = MaterialTheme.typography.bodySmall)
                     Switch(m.warpJ, { v -> onApply(ModelEditor.updateMember(model, id) { it.copy(warpJ = v) }, "M$id warping restrained at j: $v") })
                     Text("  Warping fixed j", style = MaterialTheme.typography.bodySmall)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(m.warpContI, { v -> onApply(ModelEditor.updateMember(model, id) { it.copy(warpContI = v) }, "M$id warping continuous at i: $v") })
+                    Text("  Continuous i   ", style = MaterialTheme.typography.bodySmall)
+                    Switch(m.warpContJ, { v -> onApply(ModelEditor.updateMember(model, id) { it.copy(warpContJ = v) }, "M$id warping continuous at j: $v") })
+                    Text("  Continuous j", style = MaterialTheme.typography.bodySmall)
                 }
                 Text("Iω = ${"%.3e".format(m.section.iw)} m⁶. Restrain warping at fixed bases / end plates for non-uniform (Vlasov) torsion.",
                     style = MaterialTheme.typography.labelSmall)

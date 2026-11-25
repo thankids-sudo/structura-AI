@@ -40,8 +40,9 @@ object ProjectJson {
                 .put("beta", it.betaDeg).put("hingeI", it.hingeI).put("hingeJ", it.hingeJ)
                 .apply { it.springI?.let { k -> put("springI", k) }; it.springJ?.let { k -> put("springJ", k) } }
                 .put("offsetI", it.offsetI).put("offsetJ", it.offsetJ).put("truss", it.truss).put("tensionOnly", it.tensionOnly)
+                .put("warpI", it.warpI).put("warpJ", it.warpJ).put("warpContI", it.warpContI).put("warpContJ", it.warpContJ)
         }))
-        o.put("supports", JSONArray(m.supports.map { s -> JSONObject().put("node", s.node).put("restraints", JSONArray(s.restraints)).apply { s.springs?.let { put("springs", JSONArray(it)) } } }))
+        o.put("supports", JSONArray(m.supports.map { s -> JSONObject().put("node", s.node).put("restraints", JSONArray(s.restraints)).apply { s.springs?.let { put("springs", JSONArray(it)) }; s.inclination?.let { put("inclination", JSONArray(it)) } } }))
         o.put("planeXZ", m.planeXZ)
         o.put("nodalLoads", JSONArray(m.nodalLoads.map { JSONObject().put("node", it.node).put("case", it.case).put("values", JSONArray(it.values)) }))
         o.put("memberLoads", JSONArray(m.memberLoads.map { l ->
@@ -78,11 +79,13 @@ object ProjectJson {
                 Member(it.getInt("id"), it.getInt("i"), it.getInt("j"), mats[it.getInt("material")], secs[it.getInt("section")],
                     it.optDouble("beta", 0.0), it.optBoolean("hingeI"), it.optBoolean("hingeJ"),
                     if (it.has("springI")) it.getDouble("springI") else null, if (it.has("springJ")) it.getDouble("springJ") else null,
-                    it.optDouble("offsetI", 0.0), it.optDouble("offsetJ", 0.0), it.optBoolean("truss"), it.optBoolean("tensionOnly"))
+                    it.optDouble("offsetI", 0.0), it.optDouble("offsetJ", 0.0), it.optBoolean("truss"), it.optBoolean("tensionOnly"),
+                    it.optBoolean("warpI"), it.optBoolean("warpJ"), it.optBoolean("warpContI"), it.optBoolean("warpContJ"))
             },
             supports = arr("supports") { s ->
                 val r = s.getJSONArray("restraints")
-                Support(s.getInt("node"), (0 until 6).map { r.getBoolean(it) }, s.optJSONArray("springs")?.let { k -> (0 until 6).map { k.getDouble(it) } })
+                Support(s.getInt("node"), (0 until 6).map { r.getBoolean(it) }, s.optJSONArray("springs")?.let { k -> (0 until 6).map { k.getDouble(it) } },
+                    s.optJSONArray("inclination")?.let { k -> (0 until 3).map { k.getDouble(it) } })
             },
             planeXZ = o.optBoolean("planeXZ", false),
             nodalLoads = arr("nodalLoads") { NodalLoad(it.getInt("node"), dbl(it.getJSONArray("values")), it.optString("case", "DL")) },

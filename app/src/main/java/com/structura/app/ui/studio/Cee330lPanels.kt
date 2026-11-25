@@ -101,12 +101,12 @@ internal fun RepeatPanel(model: FrameModel, selectedMember: Int?, onApply: (Fram
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 N("Steps", steps, Modifier.weight(1f)) { steps = it }
-                N("Spacing m (or list 3.2,3.0)", spacing, Modifier.weight(2f)) { spacing = it }
+                N("Spacing ${com.structura.app.Units.L} (or list 3.2,3.0)", spacing, Modifier.weight(2f)) { spacing = it }
             }
             Text("Up (+Z) with 'Top storey' adds storeys; sideways with Link on creates beams or cantilever projections (veranda / balcony).",
                 style = MaterialTheme.typography.labelSmall)
             OutlinedButton(onClick = {
-                val list = spacing.split(',', ';', ' ').mapNotNull { it.trim().replace(',', '.').toDoubleOrNull() }
+                val list = spacing.split(',', ';', ' ').mapNotNull { it.trim().replace(',', '.').toDoubleOrNull()?.times(com.structura.app.Units.len) }
                 val sp = if (list.size > 1) list else List(d(steps, 1.0).toInt().coerceIn(1, 50)) { list.firstOrNull() ?: 3.0 }
                 val sel: Set<Int> = when (scope) {
                     0 -> {
@@ -199,10 +199,13 @@ internal fun LateralPanel(model: FrameModel, onApply: (FrameModel, String) -> Un
 internal fun NodeInspector(results: FrameResults?, node: Int) {
     val r = results ?: return
     val u = r.nodeDisplacements[node] ?: return
-    Text(String.format(Locale.US, "ux %.3f  uy %.3f  uz %.3f mm   φx %.4f  φy %.4f  φz %.4f mrad",
-        u[0] * 1000, u[1] * 1000, u[2] * 1000, u[3] * 1000, u[4] * 1000, u[5] * 1000), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+    val U = com.structura.app.Units
+    Text(String.format(Locale.US, "ux %.4f  uy %.4f  uz %.4f %s   φx %.4f  φy %.4f  φz %.4f mrad",
+        U.disp(u[0]), U.disp(u[1]), U.disp(u[2]), U.D, u[3] * 1000, u[4] * 1000, u[5] * 1000), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+    r.warpingDofs[node]?.let { w -> Text(String.format(Locale.US, "Warping θ (7th DOF) %.5f rad/m", w), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
     r.reactions[node]?.let { re ->
-        Text(String.format(Locale.US, "Reaction Rx %.2f  Ry %.2f  Rz %.2f kN   Mx %.2f  My %.2f  Mz %.2f kN·m", re[0], re[1], re[2], re[3], re[4], re[5]),
+        Text(String.format(Locale.US, "Reaction Rx %.3f  Ry %.3f  Rz %.3f %s   Mx %.3f  My %.3f  Mz %.3f %s",
+            re[0] / U.force, re[1] / U.force, re[2] / U.force, U.F, re[3] / U.moment, re[4] / U.moment, re[5] / U.moment, U.M),
             fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
     }
 }

@@ -192,7 +192,7 @@ fun SteelScreen(onBack: () -> Unit) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Switch(angFixed, { angFixed = it }); Text(if (angFixed) "  Gussets fixed (Table 12)" else "  Gussets hinged (Table 12)")
                     }
-                    Text("Connected through leg b; hole Ø as in Tension task (default 18 mm). Block shear (Cl. 6.4) to be checked separately.",
+                    Text("Connected through leg b; hole Ø as in Tension task (default 18 mm). Block shear (Cl. 6.4.1) for one bolt line: pitch 2.5d, end 1.7d0, gauge 0.55b.",
                         style = MaterialTheme.typography.labelSmall)
                 }
                 SteelTask.WELDS -> {

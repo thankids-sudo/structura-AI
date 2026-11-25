@@ -35,6 +35,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         SectionStore.load(this)
+        Units.load(this)
         setContent {
             StructuraTheme {
                 val nav = rememberNavController()
