@@ -65,4 +65,35 @@ class WarpingInclinedTest {
         val u = r.nodeDisplacements[2]!!
         assertEquals(0.0, u[0] * 0.5 + u[2] * sqrt(3.0) / 2, 1e-12)
     }
+
+    @Test
+    fun warpingContinuity_acrossAJoint() {
+        val l = 4.0; val t = 5.0
+        val nodes = listOf(Node(1, 0.0, 0.0, 0.0), Node(2, l / 2, 0.0, 0.0), Node(3, l, 0.0, 0.0))
+        fun model(cont: Boolean) = FrameModel(nodes, listOf(
+            Member(1, 1, 2, st, sec, warpI = true, warpContJ = cont),
+            Member(2, 2, 3, st, sec, warpContI = cont),
+        ), listOf(Support.fixed(1)), nodalLoads = listOf(NodalLoad(3, listOf(0.0, 0.0, 0.0, t, 0.0, 0.0))), selfWeight = false)
+        val gj = st.g * sec.j; val lam = sqrt(gj / (st.e * sec.iw))
+        val exact = t / gj * (l - tanh(lam * l) / lam)
+        val r = FrameSolver.analyse(model(true))
+        println("[Warping 7th DOF] split cantilever tip twist ${r.nodeDisplacements[3]!![3]} vs single-member exact $exact; joint θ = ${r.warpingDofs[2]}")
+        assertEquals(exact, r.nodeDisplacements[3]!![3], 1e-8 * exact)
+        val b1 = r.warping(1, 10).last().bimoment; val b2 = r.warping(2, 10).first().bimoment
+        assertEquals(b1, b2, 1e-6 * abs(b1) + 1e-12)                               // bimoment continuous through the joint
+        assertEquals(-t, r.memberEndForces[2]!![3], 1e-9); assertEquals(t, r.memberEndForces[1]!![9], 1e-9)
+        assertTrue(r.equilibriumError.all { abs(it) < 1e-9 } && r.momentEquilibriumError.all { abs(it) < 1e-9 })
+        // without continuity the joint warps freely → more twist
+        val loose = FrameSolver.analyse(model(false))
+        assertTrue(loose.nodeDisplacements[3]!![3] > r.nodeDisplacements[3]!![3])
+        // reversed member direction: same result
+        val rev = FrameModel(nodes, listOf(Member(1, 1, 2, st, sec, warpI = true, warpContJ = true), Member(2, 3, 2, st, sec, warpContJ = true)),
+            listOf(Support.fixed(1)), nodalLoads = listOf(NodalLoad(3, listOf(0.0, 0.0, 0.0, t, 0.0, 0.0))), selfWeight = false)
+        assertEquals(exact, FrameSolver.analyse(rev).nodeDisplacements[3]!![3], 1e-8 * exact)
+        // exact 4×4 condensed with restrained i / free j reproduces the closed-form member stiffness
+        val mem = Member(9, 1, 2, st, sec, warpI = true)
+        val k4 = Warping.matrix4(mem, l)
+        val kc = Array(4) { a -> DoubleArray(4) { b -> k4[a][b] - k4[a][3] * k4[3][b] / k4[3][3] } }
+        assertEquals(Warping.stiffness(mem, l), kc[2][2], 1e-6 * kc[2][2])
+    }
 }

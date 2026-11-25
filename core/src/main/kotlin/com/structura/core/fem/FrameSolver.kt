@@ -368,7 +368,15 @@ object FrameSolver {
     private fun analyseLinear(model: FrameModel): FrameResults {
         require(model.members.isNotEmpty() || model.panels.isNotEmpty()) { "Model has no members or panels" }
         require(model.supports.isNotEmpty()) { "Model has no supports" }
-        val nDof = model.nodes.size * 6
+        // 7th (warping) DOF at nodes where members are marked "warping continuous"
+        val contMembers = model.members.filter { Warping.continuous(it) }
+        val wIndex = LinkedHashMap<Int, Int>(); val wRef = HashMap<Int, Vec3>()
+        for (m in contMembers) {
+            val x = (model.node(m.j).pos - model.node(m.i).pos).unit()
+            if (m.warpContI && !m.warpI && m.i !in wIndex) { wIndex[m.i] = model.nodes.size * 6 + wIndex.size; wRef[m.i] = x }
+            if (m.warpContJ && !m.warpJ && m.j !in wIndex) { wIndex[m.j] = model.nodes.size * 6 + wIndex.size; wRef[m.j] = x }
+        }
+        val nDof = model.nodes.size * 6 + wIndex.size
         val k = Array(nDof) { DoubleArray(nDof) }
         val f = DoubleArray(nDof)
 
@@ -396,6 +404,37 @@ object FrameSolver {
             for (a in 0 until 12) for (b in 0 until 12) k[idx[a]][idx[b]] += kg[a][b]
             val fg = toGlobal12(r, fNode)
             for (a in 0 until 12) f[idx[a]] += fg[a]
+        }
+        // replace the condensed torsion of warping-continuous members by the exact [φ, θ] matrix
+        for (m in contMembers) {
+            val ax = axes(model, m); val lf = flexLength(m, ax.length); val e = ax.x
+            val kt = Warping.stiffness(m, lf)
+            val ri = model.nodeIndex[m.i]!! * 6 + 3; val rj = model.nodeIndex[m.j]!! * 6 + 3
+            val ev = doubleArrayOf(e.x, e.y, e.z)
+            for (a in 0 until 3) for (b in 0 until 3) {
+                val v = kt * ev[a] * ev[b]
+                k[ri + a][ri + b] -= v; k[rj + a][rj + b] -= v; k[ri + a][rj + b] += v; k[rj + a][ri + b] += v
+            }
+            val k4 = Warping.matrix4(m, lf)
+            val stI = if (m.warpI) 0 else if (m.warpContI) 1 else 2          // 0 restrained, 1 continuous, 2 free
+            val stJ = if (m.warpJ) 0 else if (m.warpContJ) 1 else 2
+            // condense free θ, drop restrained θ
+            val keep = (0 until 4).filter { it == 0 || it == 2 || (it == 1 && stI == 1) || (it == 3 && stJ == 1) }
+            val cond = (0 until 4).filter { (it == 1 && stI == 2) || (it == 3 && stJ == 2) }
+            val kc = Array(4) { a -> DoubleArray(4) { b -> k4[a][b] } }
+            for (c in cond) for (a in keep) for (b in keep) kc[a][b] -= k4[a][c] * k4[c][b] / k4[c][c]
+            if (cond.size == 2) {   // both free: exact 2-step condensation (second pivot updated)
+                val c1 = cond[0]; val c2 = cond[1]
+                val k1 = Array(4) { a -> DoubleArray(4) { b -> k4[a][b] - k4[a][c1] * k4[c1][b] / k4[c1][c1] } }
+                for (a in keep) for (b in keep) kc[a][b] = k1[a][b] - k1[a][c2] * k1[c2][b] / k1[c2][c2]
+            }
+            fun map(local: Int): List<Pair<Int, Double>> = when (local) {
+                0 -> (0 until 3).map { ri + it to ev[it] }
+                2 -> (0 until 3).map { rj + it to ev[it] }
+                1 -> listOf(wIndex[m.i]!! to (if ((wRef[m.i]!! dot e) >= 0) 1.0 else -1.0))
+                else -> listOf(wIndex[m.j]!! to (if ((wRef[m.j]!! dot e) >= 0) 1.0 else -1.0))
+            }
+            for (a in keep) for (b in keep) for ((ga, ca) in map(a)) for ((gb, cb) in map(b)) k[ga][gb] += kc[a][b] * ca * cb
         }
         for (p in model.panels) {
             val kp = Shell.globalStiffness(model, p)
@@ -450,7 +489,7 @@ object FrameSolver {
         if (model.planeXZ) for (i in model.nodes.indices) { fixed[i * 6 + 1] = true; fixed[i * 6 + 3] = true; fixed[i * 6 + 5] = true }
         // rotations without stiffness (nodes joined only by truss / hinged members) are held, as in STAAD
         val maxDiag = (0 until nDof).maxOfOrNull { abs(k[it][it]) } ?: 1.0
-        for (d in 0 until nDof) if (d % 6 >= 3 && !fixed[d] && abs(k[d][d]) <= 1e-12 * maxDiag && abs(f[d]) < 1e-12) fixed[d] = true
+        for (d in 0 until model.nodes.size * 6) if (d % 6 >= 3 && !fixed[d] && abs(k[d][d]) <= 1e-12 * maxDiag && abs(f[d]) < 1e-12) fixed[d] = true
         val free = (0 until nDof).filter { !fixed[it] }.toIntArray()
         val nf = free.size
 
@@ -503,6 +542,7 @@ object FrameSolver {
         val nodeLocal = LinkedHashMap<Int, DoubleArray>()
         val flexDisp = LinkedHashMap<Int, DoubleArray>()
         val loadsMap = LinkedHashMap<Int, MemberLoads>()
+        val warpEnds = HashMap<Int, Pair<Double?, Double?>>()
         val totalLoad = DoubleArray(3)
         for (m in model.members) {
             val d = data[m.id]!!
@@ -516,6 +556,23 @@ object FrameSolver {
             }
             nodeLocal[m.id] = ul
             flexDisp[m.id] = d.cond.recover(tf(d.tOff, ul))
+            if (Warping.continuous(m)) {
+                val e = d.ax.x
+                fun rot(n: Int) = model.nodeIndex[n]!! * 6 + 3
+                val phi1 = e.x * u[rot(m.i)] + e.y * u[rot(m.i) + 1] + e.z * u[rot(m.i) + 2]
+                val phi2 = e.x * u[rot(m.j)] + e.y * u[rot(m.j) + 1] + e.z * u[rot(m.j) + 2]
+                fun th(n: Int, restr: Boolean, cont: Boolean): Double? = when {
+                    restr -> 0.0
+                    cont -> u[wIndex[n]!!] * (if ((wRef[n]!! dot e) >= 0) 1.0 else -1.0)
+                    else -> null
+                }
+                val t1 = th(m.i, m.warpI, m.warpContI); val t2 = th(m.j, m.warpJ, m.warpContJ)
+                val lf = flexLength(m, d.ax.length)
+                val c = Warping.coeffsGeneral(m.material.g * m.section.j, m.material.e * m.section.iw, lf, phi1, phi2, t1, t2)
+                val torque = m.material.g * m.section.j * c[1]
+                endForces[m.id]!![3] = -torque; endForces[m.id]!![9] = torque
+                warpEnds[m.id] = t1 to t2
+            }
             axesMap[m.id] = d.ax
             loadsMap[m.id] = d.loads
             var tot = Vec3.ZERO
@@ -533,7 +590,8 @@ object FrameSolver {
         }
         for (nl in model.nodalLoads) for (a in 0 until 3) totalLoad[a] += nl.values[a]
 
-        return FrameResults(model, nodeDisp, reactions, endForces, axesMap, nodeLocal, flexDisp, totalLoad, loadsMap, panelResults, totalMoment)
+        return FrameResults(model, nodeDisp, reactions, endForces, axesMap, nodeLocal, flexDisp, totalLoad, loadsMap, panelResults, totalMoment,
+            warpingEnds = warpEnds, warpingDofs = wIndex.mapValues { u[it.value] })
     }
 
     /** In-place Cholesky solve of an SPD system. */
@@ -611,15 +669,20 @@ class FrameResults(
     val totalMoment: DoubleArray = DoubleArray(3),
     /** Tension-only members switched off in the final iteration. */
     val inactiveMembers: Set<Int> = emptySet(),
+    /** End warping θ = φ' of warping-continuous members (null = free end). */
+    val warpingEnds: Map<Int, Pair<Double?, Double?>> = emptyMap(),
+    /** Nodal warping DOF values (rad/m) of the 7th DOF, by node id. */
+    val warpingDofs: Map<Int, Double> = emptyMap(),
 ) {
     internal fun withInactive(off: Set<Int>) = FrameResults(model, nodeDisplacements, reactions, memberEndForces, memberAxes,
-        memberNodeLocalDisp, memberFlexDisp, totalLoad, memberLoads, panelResults, totalMoment, off)
+        memberNodeLocalDisp, memberFlexDisp, totalLoad, memberLoads, panelResults, totalMoment, off, warpingEnds, warpingDofs)
 
     /** Non-uniform torsion along a member: twist, bimoment B (kN·m²), St Venant and warping torque (see [Warping]). */
     fun warping(memberId: Int, n: Int = 20): List<Warping.Station> {
         val m = model.members.first { it.id == memberId }
         val flex = memberFlexDisp[memberId] ?: error("No member $memberId")
         val l = memberAxes[memberId]!!.length - m.offsetI - m.offsetJ
+        warpingEnds[memberId]?.let { (t1, t2) -> return Warping.stationsGeneral(m, l, flex[3], flex[9], t1, t2, n) }
         return Warping.stations(m, l, flex[3], flex[9], n)
     }
 

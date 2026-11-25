@@ -227,6 +227,9 @@ data class Member(
     /** Warping restrained at end i / j (needs section Iω > 0) — non-uniform torsion, see [Warping]. */
     val warpI: Boolean = false,
     val warpJ: Boolean = false,
+    /** Warping continuous through the joint at end i / j (7th DOF shared with the other members marked so at that node). */
+    val warpContI: Boolean = false,
+    val warpContJ: Boolean = false,
 ) {
     /** Effective end condition: null = rigid, 0 = hinge, > 0 = spring stiffness. */
     val endI: Double? get() = if (hingeI) 0.0 else springI
