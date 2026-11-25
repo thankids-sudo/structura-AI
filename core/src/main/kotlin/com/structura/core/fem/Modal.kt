@@ -38,7 +38,14 @@ class ModalResult(
 object Modal {
     const val G = 9.81
 
-    fun analyse(model: FrameModel, nModes: Int = 6, llFactor: Double = 0.25, segments: Int = 4): ModalResult {
+    /** Assembled and solved eigen-system on the refined mesh (reduced to free DOFs). */
+    internal class System(
+        val mesh: FrameModel, val chains: Map<Int, List<Int>>, val nDof: Int,
+        val m: Array<DoubleArray>, val free: IntArray, val mr: Array<DoubleArray>,
+        val lambdas: DoubleArray, val phis: List<DoubleArray>,
+    )
+
+    internal fun system(model: FrameModel, nModes: Int, llFactor: Double, segments: Int): System {
         val plain = model.copy(members = model.members.map { it.copy(offsetI = 0.0, offsetJ = 0.0) })
         val (mesh, chains) = ModelEditor.subdivide(plain, segments)
         val nDof = mesh.nodes.size * 6
@@ -119,11 +126,17 @@ object Modal {
             if (conv && iter > 2) break
         }
 
+        return System(mesh, chains, nDof, m, free, mr, DoubleArray(q) { maxOf(lambdas[it], 0.0) },
+            (0 until q).map { c -> DoubleArray(n) { vecs[it][c] } })
+    }
+
+    fun analyse(model: FrameModel, nModes: Int = 6, llFactor: Double = 0.25, segments: Int = 4): ModalResult {
+        val sys = system(model, nModes, llFactor, segments)
+        val mesh = sys.mesh; val free = sys.free; val mr = sys.mr; val n = free.size; val nDof = sys.nDof
         // participation
         val dirs = (0 until 3).map { d -> DoubleArray(n) { r -> if (free[r] % 6 == d) 1.0 else 0.0 } }
         val total = DoubleArray(3) { d -> val v = dirs[d]; quad(mr, v, v) }
-        val modes = (0 until q).map { c ->
-            val phi = DoubleArray(n) { vecs[it][c] }
+        val modes = sys.phis.mapIndexed { c, phi ->
             val gm = quad(mr, phi, phi)
             val part = DoubleArray(3) { d ->
                 if (total[d] <= 0) 0.0 else { val l = quad(mr, phi, dirs[d]); l * l / gm / total[d] }
@@ -133,7 +146,7 @@ object Modal {
             var maxT = 0.0
             for (node in mesh.nodes.indices) maxT = maxOf(maxT, Vec3(full[node * 6], full[node * 6 + 1], full[node * 6 + 2]).length)
             if (maxT > 0) for (i in full.indices) full[i] /= maxT
-            Mode(c + 1, sqrt(maxOf(lambdas[c], 0.0)), part, shapeOf(mesh, chains, full))
+            Mode(c + 1, sqrt(sys.lambdas[c]), part, shapeOf(mesh, sys.chains, full))
         }
         val src = "self-weight" + (if (model.memberLoads.isNotEmpty() || model.nodalLoads.isNotEmpty() || model.pointLoads.isNotEmpty())
             " + DL × 1.0 + LL × ${"%.2f".format(llFactor)} (gravity loads / g)" else "")
@@ -177,7 +190,7 @@ object Modal {
     }
 
     // ---------------------------------------------------------------- small linear algebra
-    private fun quad(a: Array<DoubleArray>, x: DoubleArray, y: DoubleArray): Double {
+    internal fun quad(a: Array<DoubleArray>, x: DoubleArray, y: DoubleArray): Double {
         var s = 0.0
         for (r in a.indices) { var t = 0.0; val row = a[r]; for (c in row.indices) t += row[c] * y[c]; s += x[r] * t }
         return s
