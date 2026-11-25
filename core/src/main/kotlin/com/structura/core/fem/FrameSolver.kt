@@ -78,7 +78,7 @@ object FrameSolver {
         fun set(r: Int, c: Int, v: Double) { k[r][c] = v; k[c][r] = v }
 
         val ea = e * s.a / l
-        val gj = g * s.j / l
+        val gj = Warping.stiffness(m, l)
         val (py, pz) = phi(m, len, theory)
         val eiz = e * s.iz / (1 + py)
         val eiy = e * s.iy / (1 + pz)
@@ -319,6 +319,17 @@ object FrameSolver {
     private fun tTf(t: Array<DoubleArray>, f: DoubleArray) = DoubleArray(12) { i -> var s = 0.0; for (q in 0 until 12) s += t[q][i] * f[q]; s }
     private fun tf(t: Array<DoubleArray>, u: DoubleArray) = DoubleArray(12) { i -> var s = 0.0; for (q in 0 until 12) s += t[i][q] * u[q]; s }
 
+    /** Global → support-axes transformation for inclination angles (deg) about X, then Y, then Z: T = (Rz·Ry·Rx)ᵀ. */
+    fun inclinationT(deg: List<Double>): Array<DoubleArray> {
+        val (ax, ay, az) = deg.map { Math.toRadians(it) }
+        val rx = arrayOf(doubleArrayOf(1.0, 0.0, 0.0), doubleArrayOf(0.0, kotlin.math.cos(ax), -kotlin.math.sin(ax)), doubleArrayOf(0.0, kotlin.math.sin(ax), kotlin.math.cos(ax)))
+        val ry = arrayOf(doubleArrayOf(kotlin.math.cos(ay), 0.0, kotlin.math.sin(ay)), doubleArrayOf(0.0, 1.0, 0.0), doubleArrayOf(-kotlin.math.sin(ay), 0.0, kotlin.math.cos(ay)))
+        val rz = arrayOf(doubleArrayOf(kotlin.math.cos(az), -kotlin.math.sin(az), 0.0), doubleArrayOf(kotlin.math.sin(az), kotlin.math.cos(az), 0.0), doubleArrayOf(0.0, 0.0, 1.0))
+        fun mul(a: Array<DoubleArray>, b: Array<DoubleArray>) = Array(3) { i -> DoubleArray(3) { j -> (0 until 3).sumOf { a[i][it] * b[it][j] } } }
+        val r = mul(rz, mul(ry, rx))
+        return Array(3) { i -> DoubleArray(3) { j -> r[j][i] } }
+    }
+
     /** Analyse one load combination (factored loads superposed in a single solve). */
     fun analyse(model: FrameModel, combination: LoadCombination): FrameResults = analyse(model.factored(combination))
 
@@ -406,6 +417,29 @@ object FrameSolver {
             totalMoment[2] += n.x * f[b + 1] - n.y * f[b] + f[b + 5]
         }
 
+        // inclined supports: node DOFs expressed in the support axes (u_local = Tᵀ… with T = Rᵀ per 3×3 block)
+        val incl = HashMap<Int, Array<DoubleArray>>()      // node index → T (3×3, global → local)
+        for (s in model.supports) {
+            val ang = s.inclination ?: continue
+            if (ang.all { abs(it) < 1e-12 }) continue
+            val t = inclinationT(ang)
+            val idx = model.nodeIndex[s.node]!!
+            incl[idx] = t
+            for (blk in 0 until 2) {
+                val r0 = idx * 6 + blk * 3
+                for (c in 0 until nDof) {              // rows ← T·K
+                    val v = DoubleArray(3) { a -> var x = 0.0; for (q in 0 until 3) x += t[a][q] * k[r0 + q][c]; x }
+                    for (a in 0 until 3) k[r0 + a][c] = v[a]
+                }
+                for (r in 0 until nDof) {              // cols ← K·Tᵀ
+                    val v = DoubleArray(3) { a -> var x = 0.0; for (q in 0 until 3) x += k[r][r0 + q] * t[a][q]; x }
+                    for (a in 0 until 3) k[r][r0 + a] = v[a]
+                }
+                val fv = DoubleArray(3) { a -> var x = 0.0; for (q in 0 until 3) x += t[a][q] * f[r0 + q]; x }
+                for (a in 0 until 3) f[r0 + a] = fv[a]
+            }
+        }
+
         val fixed = BooleanArray(nDof)
         for (s in model.supports) {
             val base = (model.nodeIndex[s.node] ?: error("Support on missing node ${s.node}")) * 6
@@ -447,7 +481,18 @@ object FrameSolver {
                 for (c in 0 until nDof) sum += row[c] * u[c]
                 rr[a] = sum - f[base + a]
             }
+            incl[model.nodeIndex[s.node]!!]?.let { t ->       // back to global: Tᵀ·r
+                for (blk in 0 until 2) {
+                    val v = DoubleArray(3) { a -> var x = 0.0; for (q in 0 until 3) x += t[q][a] * rr[blk * 3 + q]; x }
+                    for (a in 0 until 3) rr[blk * 3 + a] = v[a]
+                }
+            }
             reactions[s.node] = rr
+        }
+        for ((idx, t) in incl) for (blk in 0 until 2) {
+            val r0 = idx * 6 + blk * 3
+            val v = DoubleArray(3) { a -> var x = 0.0; for (q in 0 until 3) x += t[q][a] * u[r0 + q]; x }
+            for (a in 0 until 3) u[r0 + a] = v[a]
         }
 
         val nodeDisp = LinkedHashMap<Int, DoubleArray>()
@@ -569,6 +614,14 @@ class FrameResults(
 ) {
     internal fun withInactive(off: Set<Int>) = FrameResults(model, nodeDisplacements, reactions, memberEndForces, memberAxes,
         memberNodeLocalDisp, memberFlexDisp, totalLoad, memberLoads, panelResults, totalMoment, off)
+
+    /** Non-uniform torsion along a member: twist, bimoment B (kN·m²), St Venant and warping torque (see [Warping]). */
+    fun warping(memberId: Int, n: Int = 20): List<Warping.Station> {
+        val m = model.members.first { it.id == memberId }
+        val flex = memberFlexDisp[memberId] ?: error("No member $memberId")
+        val l = memberAxes[memberId]!!.length - m.offsetI - m.offsetJ
+        return Warping.stations(m, l, flex[3], flex[9], n)
+    }
 
     /** Σ(r × R + M_R) + ΣM_applied about the origin — should be ≈ 0. */
     val momentEquilibriumError: DoubleArray

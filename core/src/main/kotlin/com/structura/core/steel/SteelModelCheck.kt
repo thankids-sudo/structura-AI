@@ -24,7 +24,8 @@ object SteelModelCheck {
             else -> s.area - s.avZ
         }
         return Section(s.name, s.area * 1e-6, s.izz * 1e-12, s.iyy * 1e-12, s.j * 1e-12, s.width / 1000, s.depth / 1000,
-            asy * 1e-6, s.avZ * 1e-6, shape, s.tf / 1000, s.tw / 1000)
+            asy * 1e-6, s.avZ * 1e-6, shape, s.tf / 1000, s.tw / 1000,
+            iw = if (shape == "I") s.iyy * 1e-12 * ((s.depth - s.tf) / 1000).let { it * it } / 4 else 0.0)
     }
 
     /** Steel section (mm) back from a FEM section, or null if it is not a steel shape we can check. */

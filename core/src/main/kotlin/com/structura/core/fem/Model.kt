@@ -224,6 +224,9 @@ data class Member(
     val truss: Boolean = false,
     /** Tension-only (bracing / cables): removed iteratively while in compression. */
     val tensionOnly: Boolean = false,
+    /** Warping restrained at end i / j (needs section Iω > 0) — non-uniform torsion, see [Warping]. */
+    val warpI: Boolean = false,
+    val warpJ: Boolean = false,
 ) {
     /** Effective end condition: null = rigid, 0 = hinge, > 0 = spring stiffness. */
     val endI: Double? get() = if (hingeI) 0.0 else springI
@@ -242,6 +245,11 @@ data class Support(
     val restraints: List<Boolean>,
     /** Elastic support springs kx, ky, kz (kN/m), kθx, kθy, kθz (kN·m/rad) on the unrestrained DOFs; null = none. */
     val springs: List<Double>? = null,
+    /**
+     * Inclined support: rotation of the support axes (degrees) about global X, Y, Z (applied X, then Y, then Z).
+     * [restraints] and [springs] then act along these local axes (STAAD "INCLINED" supports); reactions are reported globally.
+     */
+    val inclination: List<Double>? = null,
 ) {
     init { require(restraints.size == 6); require(springs == null || springs.size == 6) }
 
