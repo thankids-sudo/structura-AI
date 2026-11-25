@@ -108,10 +108,11 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
     val camera = remember { Camera() }
 
     // ---- model + undo/redo
-    val start = remember { DesignSession.takeStudioModel() ?: ModelEditor.empty("Structura AI project") }
+    val start = remember { (DesignSession.takeStudioModel() ?: DesignSession.currentModel ?: ModelEditor.empty("Structura AI project")).also { DesignSession.currentModel = it } }
     var history by remember { mutableStateOf(listOf(start)) }
     var pos by remember { mutableStateOf(0) }
     val model = history[pos]
+    androidx.compose.runtime.SideEffect { if (DesignSession.currentModel !== model) DesignSession.currentModel = model }
 
     // ---- editing state
     var tool by remember { mutableStateOf(Tool.SELECT) }
@@ -162,7 +163,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
     var eqBuilding by remember { mutableStateOf(Seismic.BuildingType.RC_MRF) }
     var seismicEnv by remember { mutableStateOf(false) }
     var steel by remember { mutableStateOf<List<SteelModelCheck.MemberCheck>>(emptyList()) }
-    var panelOpen by remember { mutableStateOf(0) }   // 0 none, 1 benchmarks, 2 repeat, 3 lateral
+    var panelOpen by remember { mutableStateOf(DesignSession.takePanel()) }   // 0 none, 1 benchmarks, 2 repeat, 3 lateral
     var showStatic by remember { mutableStateOf(false) }
     var aiReview by remember { mutableStateOf<com.structura.core.fem.ResultCheck.Review?>(null) }
     var showUtil by remember { mutableStateOf(true) }
@@ -176,6 +177,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
 
     fun commit(m: FrameModel, msg: String? = null) {
         history = (history.take(pos + 1) + m).takeLast(80)
+        DesignSession.currentModel = m
         pos = history.size - 1
         results = null; buckling = null; env = emptyList(); modal = null; seismic = null; seismicEnv = false; steel = emptyList(); aiReview = null
         if (view != ResultView.MODEL) view = ResultView.MODEL

@@ -212,7 +212,10 @@ fun FrameView3D(
     pendingNodes: List<Int> = emptyList(),
     /** Member id → design utilisation (IS 800); colours members in the MODEL view when not null. */
     memberUtil: Map<Int, Double>? = null,
+    /** Dark "UCS space" look for the Workbench home (navy ground, light members, brand axis colours). */
+    dark: Boolean = false,
 ) {
+    viewDark = dark
     var canvasSize by remember { mutableStateOf(Size(1f, 1f)) }
     val tapCallback by rememberUpdatedState(onNodeTap)
     val tapInfoCallback by rememberUpdatedState(onTap)
@@ -231,14 +234,14 @@ fun FrameView3D(
     )
     val phase = grow.value * (if (animate && (view == ResultView.DEFORMED || view == ResultView.BUCKLING || view == ResultView.MODAL)) osc else 1f)
 
-    val ink = Color(0xFF1B2A41)
+    val ink = if (dark) Color(0xFFBFD7EA) else Color(0xFF1B2A41)
     val pos = Color(0xFFC62828)
     val neg = Color(0xFF1565C0)
     val loadColor = Color(0xFFEF6C00)
 
     Box(
         modifier
-            .background(Color.White)
+            .background(if (dark) Color(0xFF0E1726) else Color.White)
             .onSizeChanged { canvasSize = Size(it.width.toFloat(), it.height.toFloat()) }
             .pointerInput(camera) {
                 detectTransformGestures { _, pan, z, _ ->
@@ -332,7 +335,7 @@ fun FrameView3D(
                 drawIntoCanvas {
                     it.nativeCanvas.drawText(
                         label, 16f, 36f,
-                        Paint().apply { textSize = 30f; isAntiAlias = true; color = android.graphics.Color.BLACK },
+                        Paint().apply { textSize = 30f; isAntiAlias = true; color = if (viewDark) android.graphics.Color.WHITE else android.graphics.Color.BLACK },
                     )
                 }
                 return@Canvas
@@ -419,9 +422,12 @@ private fun segmentDistance(p: Offset, a: Offset, b: Offset): Float {
     return (p - (a + ab * t)).getDistance()
 }
 
+/** Set by FrameView3D for its draw helpers (UI thread only). */
+private var viewDark = false
+
 private fun DrawScope.grid(pj: Projector, model: FrameModel, wp: WorkPlane) {
     val (lo, hi) = gridCorners(model, wp)
-    val c = Color(0xFFB0BEC5)
+    val c = if (viewDark) Color(0xFF24364F) else Color(0xFFB0BEC5)
     val s = wp.snap.coerceAtLeast(0.1)
     fun lines(u0: Double, u1: Double, v0: Double, v1: Double, pt: (Double, Double) -> Vec3) {
         var u = u0
@@ -441,7 +447,9 @@ private fun DrawScope.grid(pj: Projector, model: FrameModel, wp: WorkPlane) {
 private fun DrawScope.axesTriad(pj: Projector) {
     val o = Offset(44f, size.height - 44f)
     val paint = Paint().apply { textSize = 26f; isAntiAlias = true }
-    for ((v, c, l) in listOf(Triple(Vec3.X, Color.Red, "X"), Triple(Vec3.Y, Color(0xFF2E7D32), "Y"), Triple(Vec3.Z, Color.Blue, "Z"))) {
+    val axes = if (viewDark) listOf(Triple(Vec3.X, Color(0xFFF5A524), "X"), Triple(Vec3.Y, Color(0xFF3DD6F5), "Y"), Triple(Vec3.Z, Color(0xFF4ADE80), "Z"))
+    else listOf(Triple(Vec3.X, Color.Red, "X"), Triple(Vec3.Y, Color(0xFF2E7D32), "Y"), Triple(Vec3.Z, Color.Blue, "Z"))
+    for ((v, c, l) in axes) {
         val (x, y) = pj.proj(v)
         val e = Offset(o.x + (x * 30).toFloat(), o.y - (y * 30).toFloat())
         drawLine(c, o, e, 3f)
@@ -514,7 +522,7 @@ private fun DrawScope.utilLegend() {
     val y0 = 16f
     for (k in 0 until 20) drawRect(heat(k / 19f), Offset(x0 + k * 6f, y0), Size(6f, 14f))
     drawRect(Color(0xFFD50000), Offset(x0 + 124f, y0), Size(14f, 14f))
-    val paint = Paint().apply { textSize = 22f; isAntiAlias = true; color = android.graphics.Color.DKGRAY }
+    val paint = Paint().apply { textSize = 22f; isAntiAlias = true; color = if (viewDark) android.graphics.Color.LTGRAY else android.graphics.Color.DKGRAY }
     drawIntoCanvas {
         it.nativeCanvas.drawText("η 0", x0, y0 + 36f, paint)
         it.nativeCanvas.drawText("1.0  >1", x0 + 72f, y0 + 36f, paint)
@@ -525,7 +533,7 @@ private fun DrawScope.legend(maxD: Double) {
     val x0 = size.width - 150f
     val y0 = 16f
     for (k in 0 until 20) drawRect(heat(k / 19f), Offset(x0 + k * 6f, y0), Size(6f, 14f))
-    val paint = Paint().apply { textSize = 22f; isAntiAlias = true; color = android.graphics.Color.DKGRAY }
+    val paint = Paint().apply { textSize = 22f; isAntiAlias = true; color = if (viewDark) android.graphics.Color.LTGRAY else android.graphics.Color.DKGRAY }
     drawIntoCanvas {
         it.nativeCanvas.drawText("0", x0, y0 + 36f, paint)
         it.nativeCanvas.drawText("%.2f mm".format(maxD * 1000), x0 + 58f, y0 + 36f, paint)

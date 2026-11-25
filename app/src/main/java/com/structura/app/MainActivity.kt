@@ -41,7 +41,7 @@ class MainActivity : ComponentActivity() {
                 val nav = rememberNavController()
                 NavHost(navController = nav, startDestination = Routes.HOME) {
                     composable(Routes.HOME) {
-                        HomeScreen(onOpen = { route -> nav.navigate(route) })
+                        com.structura.app.ui.home.WorkbenchHome(onOpen = { route -> nav.navigate(route) })
                     }
                     composable(Routes.RCC_BEAM) {
                         BeamDesignScreen(

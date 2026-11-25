@@ -21,6 +21,13 @@ object DesignSession {
 
     fun takePrefill(): Prefill? = prefill.also { prefill = null }
 
+    /** The project currently open (shown live on the Workbench home; kept in step with 3D Studio). */
+    var currentModel by androidx.compose.runtime.mutableStateOf<com.structura.core.fem.FrameModel?>(null)
+
+    /** Studio panel to open on arrival (1 benchmarks / trusses, 2 repeat, 3 lateral loads). */
+    var studioPanel = 0
+    fun takePanel() = studioPanel.also { studioPanel = 0 }
+
     /** Model handed from the template wizard to the 3D Studio editor. */
     var studioModel: com.structura.core.fem.FrameModel? = null
 
