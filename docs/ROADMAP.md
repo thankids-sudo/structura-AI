@@ -61,4 +61,6 @@ Each step is built, tested and committed separately.
 - [x] 5.9 Imperial ↔ SI unit converter (Loads screen); benchmarks convert at the boundary
 - [x] 5.10 IS 800 single-angle members: tension Cl. 6.2 / 6.3.3 (α·An·fu/γm1), compression Cl. 7.5.1.2 (λe, Table 12), Table 2 classification; angles in Studio steel checks; Steel screen "Single angle"
 - [x] 5.11 IS 1893 accidental eccentricity ±5 % (Cl. 7.8.2) and EX / EY cases with 100 % + 30 % combinations (Cl. 6.3.4.1, 25 combinations)
-- [ ] 5.12 Warping continuity across joints (7th DOF); imperial input in the editors; block shear (Cl. 6.4)
+- [x] 5.12 Warping continuity across joints: 7th (warping) DOF at nodes where member ends are marked "continuous", exact Vlasov [φ, θ] member matrix (split cantilever = single-member closed form to 1e-15)
+- [x] 5.13 Imperial input in the Studio editors (ft, kip, kip/ft, psf; node inspector in in / kip / kip·ft), stored in SI
+- [x] 5.14 Block shear for angles, IS 800 Cl. 6.4.1 (one bolt line)

@@ -7,7 +7,7 @@ Each requirement was mapped to that architecture; this table records what was bu
 | Brief item | Status | Where |
 |---|---|---|
 | Model type SPACE / PLANE / TRUSS | Done — `FrameModel.planeXZ` (STAAD PLANE: uy, φx, φz held), truss members | `fem/Model.kt`, Studio "2D plane XZ" |
-| Units kip/ft/in | Benchmarks converted at the boundary; imperial ↔ SI converter on the Loads screen; app input stays SI | `fem/Benchmarks.kt`, `ui/loads/LoadsScreen.kt` |
+| Units kip/ft/in | Studio "Units" chip: ft / kip / kip/ft / psf input, node inspector in in / kip / kip·ft; storage and analysis in SI; converter on the Loads screen | `Units` (DesignSession.kt), Studio |
 | Camera presets, labels, load vectors | Existing: 3D, Top XY, Front XZ, Right YZ; load arrows | `ui/fem/FrameView3D.kt` |
 | Assign to selected / to all | Existing per-member Apply / Apply to all | Studio member editor |
 | Translational repeat (steps, spacings, link) | Done — node merging, link members, veranda projections | `fem/Builders.kt` `translationalRepeat`, Studio "⇉ Repeat" |
@@ -17,7 +17,7 @@ Each requirement was mapped to that architecture; this table records what was bu
 | AISC W / C / L / WT | Via CSV import (no AISC data shipped) | Steel → Import section table |
 | Ec IS 456 / ACI 318 (4700√f'c, wc^1.5·0.043√f'c) | Done | `Material.concrete`, `Material.concreteAci` |
 | Releases My/Mz, springs, offsets, beta | Existing; truss (axial-only incl. torsion release) and tension-only (iterative) added | `Member.truss`, `Member.tensionOnly`, `FrameSolver.analyse` |
-| Warping torsion / bimoment B(x) | Done per member (Vlasov, warping condensed: restrained or free at each end; no warping continuity across joints) — tip twist matches closed form to 1e-16 | `fem/Warping.kt`, member editor |
+| Warping torsion / bimoment B(x), 7th DOF | Done — per end: restrained, free (condensed) or continuous (shared nodal warping DOF, exact Vlasov 4×4 by energy). Split cantilever with a continuous joint = closed form to 1e-15; bimoment continuous through the joint | `fem/Warping.kt`, `FrameSolver`, member editor |
 | Supports fixed / pinned / roller (axis) / springs | Done — `Support.roller(axis)`, `Support.spring(...)` | Studio node editor |
 | Inclined support coordinate systems | Done — `Support.inclination` (X, Y, Z angles); test R = (17.32, 0, 30) kN on a 30° roller | node editor "Incline" |
 | Self-weight factor, partial / trapezoidal / point loads, floor loads | Existing | `MemberLoad`, `PointLoad`, `FloorLoad` |
