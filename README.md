@@ -7,7 +7,7 @@ Android app for structural design to Indian Standards. It has four modules, buil
 | 1 | **RCC Design**: beam, slab, column, footing, BBS | IS 456, IS 875, IS 1893, SP 16 | **Beam design + UCS detail drawing / DXF done** |
 | 2 | **Steel Design**: beams, columns, tension members, connections, checks from 3D Studio | IS 800, IS 808, IS 4923 | Done |
 | 3 | **FEM Analysis + AI**: 3D frame FEM (RFEM-style), N/V/M diagrams, deformed shape, AI result check | Direct stiffness method | **3D frame solver done** |
-| 4 | **Drawing → Structure AI** (DXF done): plan import, grid/column layout, load take-down, member sizing | — | Planned |
+| 4 | **Drawing → Structure AI**: plan import, grid/column layout, load take-down, member sizing | IS 456, IS 875, IS 13920 | DXF done; PDF/photo next |
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the step-by-step build plan.
 
