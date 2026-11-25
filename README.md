@@ -79,6 +79,11 @@ Every check carries its clause:
   - Deflection basic l/d: 26 (continuous) only when both long edges are continuous, otherwise 20 (conservative for end panels). ly/lx is clamped to 2.0; above that design as one-way.
 - **Columns:** slenderness (Cl. 25.1.2), minimum eccentricity (Cl. 25.4), additional moments with the k reduction for slender columns (Cl. 39.7). Uniaxial capacities come from strain compatibility (parabolic-rectangular concrete, Fig. 23 steel, εcu reduced when the whole section is in compression, Cl. 39.1). Then the biaxial check (Cl. 39.6) and tie rules (Cl. 26.5.3).
 - **Isolated footings:** plan size from SBC, moments at the column face, depth iterated for flexure, one-way shear and punching (ks·0.25√fck), central band, minimum steel, development length.
+  - **With column moments:** service ML / MB enlarge the plan until qmax = P/A + 6ML/(BL²) + 6MB/(LB²) ≤ SBC and qmin ≥ 0 (no tension). Flexure and one-way shear integrate the factored trapezoidal pressure on the heavier side; punching uses average qu (moment transfer, Cl. 31.6.2.2, flagged).
+
+## Branding
+- Logo source: `docs/branding/structura_logo_original.png`; Play Store icon `docs/branding/playstore_icon_512.png`.
+- Launcher: `res/mipmap-*/ic_launcher*.png` and adaptive icon `mipmap-anydpi-v26` (background #1A273A). In-app logo: `res/drawable-nodpi/structura_logo.png`.
 - **Bar bending schedule** for every member, exported as CSV. Shape-specific cut lengths use IS 2502 bend deductions (90° = 2φ, 135° = 3φ) and unit weight d²/162; every row lists its formula.
 
 ## Steel member design (IS 800:2007, limit state)

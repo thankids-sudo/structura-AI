@@ -82,10 +82,16 @@ fun HomeScreen(onOpen: (String) -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(title = {
-                Column {
-                    Text("Structura AI", fontWeight = FontWeight.Bold)
-                    Text("Structural design to Indian Standards", style = MaterialTheme.typography.labelMedium)
-                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.foundation.Image(
+                        androidx.compose.ui.res.painterResource(com.structura.app.R.drawable.structura_logo), contentDescription = "Structura AI logo",
+                        modifier = Modifier.size(40.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text("Structura AI", fontWeight = FontWeight.Bold)
+                        Text("Structural design to Indian Standards", style = MaterialTheme.typography.labelMedium)
+                    }}
             })
         },
     ) { pad ->

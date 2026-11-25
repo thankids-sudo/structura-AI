@@ -11,6 +11,8 @@ Each step is built, tested and committed separately.
 - [x] 1.3b Two-way restrained slabs (Table 26, 9 edge cases, top steel, corner torsion D-1.8 – D-1.10, BBS)
 - [x] 1.4 Columns: axial + uniaxial/biaxial (Cl. 39, SP 16 interaction charts), slenderness (Cl. 25)
 - [x] 1.5 Isolated footings: bearing, one-way & punching shear, flexure (Cl. 34)
+- [x] 1.5b Footings with uniaxial / biaxial moment: kern check, trapezoidal pressure for flexure and shear
+- [x] Branding: launcher icon (adaptive + legacy), Play Store 512 px icon, logo on Home
 - [ ] 1.6 Loads: IS 875 Part 1/2 dead & imposed, load combinations (Table 18)
 - [x] 1.7 Bar bending schedule export (CSV / Excel)
 

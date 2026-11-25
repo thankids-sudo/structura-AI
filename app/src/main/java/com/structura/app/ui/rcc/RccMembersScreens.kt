@@ -207,6 +207,14 @@ fun ColumnScreen(onBack: () -> Unit) = RccScaffold("RCC Column — IS 456", onBa
         Field("Bar φ", dia, Modifier.weight(1f)) { dia = it }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Field("M along L (kN·m)", ml, Modifier.weight(1f)) { ml = it }
+        Field("Mu along L", mlu, Modifier.weight(1f)) { mlu = it }
+        Field("M along B (kN·m)", mb, Modifier.weight(1f)) { mb = it }
+        Field("Mu along B", mbu, Modifier.weight(1f)) { mbu = it }
+    }
+    Text("Moments: service for sizing (qmax ≤ SBC, no tension), factored for design. Mu 0 → 1.5 × M. L is along column D.",
+        style = MaterialTheme.typography.labelSmall)
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Field("Bars on b-face", nb, Modifier.weight(1f)) { nb = it }
         Field("Bars on D-face", nd, Modifier.weight(1f)) { nd = it }
         Field("fck", fck, Modifier.weight(1f)) { fck = it }
@@ -252,6 +260,10 @@ fun FootingScreen(onBack: () -> Unit) = RccScaffold("Isolated footing — IS 456
     var fck by rememberSaveable { mutableStateOf("25") }
     var fy by rememberSaveable { mutableStateOf("500") }
     var dia by rememberSaveable { mutableStateOf("12") }
+    var ml by rememberSaveable { mutableStateOf("0") }
+    var mb by rememberSaveable { mutableStateOf("0") }
+    var mlu by rememberSaveable { mutableStateOf("0") }
+    var mbu by rememberSaveable { mutableStateOf("0") }
     var out by remember { mutableStateOf<Pair<FootingInput, com.structura.core.rcc.FootingResult>?>(null) }
     var err by remember { mutableStateOf<String?>(null) }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -269,7 +281,10 @@ fun FootingScreen(onBack: () -> Unit) = RccScaffold("Isolated footing — IS 456
     Button(onClick = {
         err = null
         runCatching {
-            val inp = FootingInput(n(p, 1000.0), n(pu, 1500.0), n(cb, 300.0), n(cd, 450.0), n(sbc, 200.0), n(fck, 25.0), n(fy, 500.0), n(dia, 12.0))
+            val inp = FootingInput(n(p, 1000.0), n(pu, 1500.0), n(cb, 300.0), n(cd, 450.0), n(sbc, 200.0), n(fck, 25.0), n(fy, 500.0), n(dia, 12.0),
+                momentL = n(ml, 0.0), momentB = n(mb, 0.0),
+                factoredMomentL = n(mlu, 0.0).takeIf { it != 0.0 } ?: 1.5 * n(ml, 0.0),
+                factoredMomentB = n(mbu, 0.0).takeIf { it != 0.0 } ?: 1.5 * n(mb, 0.0))
             inp to FootingDesigner.design(inp)
         }.onSuccess { out = it }.onFailure { err = it.message; out = null }
     }, modifier = Modifier.fillMaxWidth()) { Text("Design footing") }
@@ -277,6 +292,7 @@ fun FootingScreen(onBack: () -> Unit) = RccScaffold("Isolated footing — IS 456
     out?.let { (inp, r) ->
         CheckSheet(r.isSafe, listOf(
             String.format(Locale.US, "Plan %.0f × %.0f mm, overall depth %.0f mm (d = %.0f mm)", r.lengthL, r.widthB, r.depth, r.d),
+            String.format(Locale.US, "Service pressure: qmax %.1f, qmin %.1f kN/m²", r.qMaxService, r.qMinService),
             String.format(Locale.US, "qu = %.1f kN/m² · bars ∥ L: %d-φ%d @ %d · bars ∥ B: %d-φ%d @ %d", r.qu, r.barsL, inp.barDia.toInt(), r.spacingL.toInt(), r.barsB, inp.barDia.toInt(), r.spacingB.toInt()),
         ), r.checks, r.steps)
         BbsTable(BarBendingSchedule.footing(inp, r), "footing")

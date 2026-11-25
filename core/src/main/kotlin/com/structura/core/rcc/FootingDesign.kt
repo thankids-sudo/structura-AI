@@ -20,6 +20,11 @@ data class FootingInput(
     val barDia: Double = 12.0,
     val clearCover: Double = 50.0,
     val selfWeightAllowance: Double = 0.10,
+    /** Service moments (kN·m): [momentL] varies the pressure along L (bending about the B-axis), [momentB] along B. */
+    val momentL: Double = 0.0,
+    val momentB: Double = 0.0,
+    val factoredMomentL: Double = 1.5 * momentL,
+    val factoredMomentB: Double = 1.5 * momentB,
 )
 
 data class FootingResult(
@@ -28,6 +33,7 @@ data class FootingResult(
     val astL: Double, val astB: Double,    // total steel along L (bars parallel to L) / along B, mm²
     val barsL: Int, val barsB: Int, val spacingL: Double, val spacingB: Double,
     val centralBandBars: Int,
+    val qMaxService: Double = 0.0, val qMinService: Double = 0.0,   // kN/m² (gross, with self-weight allowance)
     val checks: List<DesignCheck>, val steps: List<String>,
 ) {
     val isSafe: Boolean get() = checks.none { it.status == Status.FAIL }
@@ -56,15 +62,51 @@ object FootingDesigner {
         bw = ceil(bw * 20) / 20                                // round up to 50 mm
         val lw = ceil((bw + diff) * 20) / 20
         steps += "Area = ${f2(1 + inp.selfWeightAllowance)} × ${f1(inp.serviceLoad)} / ${f1(inp.sbc)} = ${f2(area)} m² → L × B = ${f2(lw)} × ${f2(bw)} m (equal projections)"
-        val qu = inp.factoredLoad / (lw * bw)
-        val qs = inp.serviceLoad * (1 + inp.selfWeightAllowance) / (lw * bw)
-        checks += DesignCheck("Bearing pressure (service)", "${f1(qs)} kN/m²", "≤ SBC ${f1(inp.sbc)} kN/m²", if (qs <= inp.sbc + 1e-6) Status.PASS else Status.FAIL, IS456.ref("Cl. 34.1"))
-        steps += "Net factored upward pressure qu = ${f1(inp.factoredLoad)} / ${f2(lw * bw)} = ${f2(qu)} kN/m²"
+        val ps = inp.serviceLoad * (1 + inp.selfWeightAllowance)
+        fun qPair(l: Double, b: Double): Pair<Double, Double> {
+            val q0 = ps / (l * b); val dq = 6 * kotlin.math.abs(inp.momentL) / (b * l * l) + 6 * kotlin.math.abs(inp.momentB) / (l * b * b)
+            return (q0 + dq) to (q0 - dq)
+        }
+        val hasMoment = inp.momentL != 0.0 || inp.momentB != 0.0
+        var lw0 = lw; var bw0 = bw; var guard = 0
+        if (hasMoment) {
+            steps += "Column moments (service): ML = ${f2(inp.momentL)} kN·m (pressure varies along L), MB = ${f2(inp.momentB)} kN·m (along B); " +
+                "eL = ${f1(1000 * inp.momentL / ps)} mm, eB = ${f1(1000 * inp.momentB / ps)} mm"
+            // enlarge until qmax ≤ SBC and the base is fully in compression (resultant within the kern)
+            while (guard++ < 400) {
+                val (qmx, qmn) = qPair(lw0, bw0)
+                if (qmx <= inp.sbc + 1e-6 && qmn >= -1e-9) break
+                if (kotlin.math.abs(inp.momentL) / lw0 >= kotlin.math.abs(inp.momentB) / bw0) lw0 += 0.05 else bw0 += 0.05
+            }
+            lw0 = ceil(lw0 * 20 - 1e-6) / 20; bw0 = ceil(bw0 * 20 - 1e-6) / 20
+            steps += "Enlarged for eccentricity: L × B = ${f2(lw0)} × ${f2(bw0)} m (qmax ≤ SBC, qmin ≥ 0)"
+        }
+        val lwF = lw0; val bwF = bw0
+        val qu = inp.factoredLoad / (lwF * bwF)
+        val (qmaxS, qminS) = qPair(lwF, bwF)
+        checks += DesignCheck("Bearing pressure (service)", "qmax ${f1(qmaxS)} kN/m²", "≤ SBC ${f1(inp.sbc)} kN/m²", if (qmaxS <= inp.sbc + 1e-6) Status.PASS else Status.FAIL, IS456.ref("Cl. 34.1"))
+        if (hasMoment) checks += DesignCheck("No tension under base", "qmin ${f1(qminS)} kN/m²", "≥ 0 (e within kern: eL/L + eB/B ≤ 1/6)",
+            if (qminS >= -1e-6) Status.PASS else Status.FAIL, IS456.ref("Cl. 34.1, 34.4"))
+        // factored pressure gradients (kN/m² per m) from the factored moments
+        val kL = 12 * inp.factoredMomentL / (bwF * lwF * lwF * lwF)
+        val kB = 12 * inp.factoredMomentB / (lwF * bwF * bwF * bwF)
+        steps += "Net factored upward pressure qu = ${f1(inp.factoredLoad)} / ${f2(lwF * bwF)} = ${f2(qu)} kN/m²" +
+            if (hasMoment) "; edge values ${f2(qu + kL.let { kotlin.math.abs(it) } * lwF / 2 + kotlin.math.abs(kB) * bwF / 2)} / ${f2(qu - kotlin.math.abs(kL) * lwF / 2 - kotlin.math.abs(kB) * bwF / 2)} kN/m² (Mu = ${f2(inp.factoredMomentL)}, ${f2(inp.factoredMomentB)} kN·m)" else ""
 
-        val L = lw * 1000; val B = bw * 1000
+        val L = lwF * 1000; val B = bwF * 1000
         val cl = (L - inp.colD) / 2; val cb = (B - inp.colB) / 2      // cantilevers (mm)
-        val muL = qu * bw * (cl / 1000) * (cl / 1000) / 2           // kN·m, bars parallel to L
-        val muB = qu * lw * (cb / 1000) * (cb / 1000) / 2
+        // cantilever on the more heavily loaded side: ∫ (qu + |k|·s)(s − c) ds × width, s from the centre (m)
+        fun cantMoment(width: Double, half: Double, c: Double, k: Double): Double {
+            val a = half - c; val kk = kotlin.math.abs(k)
+            return width * (qu * a * a / 2 + kk * (a * a * a / 3 + c * a * a / 2))
+        }
+        fun cantShear(width: Double, half: Double, from: Double, k: Double): Double {
+            if (from >= half) return 0.0
+            val kk = kotlin.math.abs(k)
+            return width * (qu * (half - from) + kk * (half * half - from * from) / 2)
+        }
+        val muL = cantMoment(bwF, lwF / 2, inp.colD / 2000, kL)          // kN·m, bars parallel to L
+        val muB = cantMoment(lwF, bwF / 2, inp.colB / 2000, kB)
         steps += "Moments at the column face: Mu (bars ∥ L) = ${f2(muL)} kN·m over B; Mu (bars ∥ B) = ${f2(muB)} kN·m over L"
 
         val beta = min(inp.colB, inp.colD) / max(inp.colB, inp.colD)
@@ -85,13 +127,13 @@ object FootingDesigner {
             astL = max(ast(muL, B), 0.0012 * B * dTot)
             astB = max(ast(muB, L), 0.0012 * L * dTot)
             // one-way shear at d from the face (both directions)
-            val vL = qu * bw * max(cl - d, 0.0) / 1000
-            val vB = qu * lw * max(cb - d, 0.0) / 1000
+            val vL = cantShear(bwF, lwF / 2, (inp.colD / 2 + d) / 1000, kL)
+            val vB = cantShear(lwF, bwF / 2, (inp.colB / 2 + d) / 1000, kB)
             val tvL = vL * 1e3 / (B * d); val tvB = vB * 1e3 / (L * d)
             val tcL = IS456.tauC(100 * astL / (B * d), inp.fck); val tcB = IS456.tauC(100 * astB / (L * d), inp.fck)
             // punching at d/2
             val b0 = 2 * ((inp.colB + d) + (inp.colD + d))
-            val vp = qu * (lw * bw - (inp.colB + d) * (inp.colD + d) / 1e6)
+            val vp = qu * (lwF * bwF - (inp.colB + d) * (inp.colD + d) / 1e6)
             val tp = vp * 1e3 / (b0 * d)
             if (tvL <= tcL && tvB <= tcB && tp <= tauPunchMax) {
                 ok = true
@@ -123,6 +165,7 @@ object FootingDesigner {
         checks += DesignCheck("Development length", "available ${f1(avail)} mm", "≥ Ld = φ·σs/(4·τbd) = ${f1(ld)} mm",
             if (avail >= ld) Status.PASS else Status.FAIL, IS456.ref("Cl. 26.2.1, 34.2.4.3") + if (avail < ld) " — provide 90° bends at the ends" else "")
         steps += "Bars ∥ L: ${nL}-${inp.barDia.toInt()} φ (${f1(astL)} mm² req.); bars ∥ B: ${nB}-${inp.barDia.toInt()} φ (${f1(astB)} mm² req.)"
-        return FootingResult(L, B, depth, d, qu, astL, astB, nL, nB, sL, sB, band, checks, steps)
+        if (hasMoment) checks += DesignCheck("Punching with moment", "average qu used", "moment transfer by shear not added — check Cl. 31.6.2.2 if Mu is large", Status.INFO, IS456.ref("Cl. 31.6.2.2"))
+        return FootingResult(L, B, depth, d, qu, astL, astB, nL, nB, sL, sB, band, qmaxS, qminS, checks, steps)
     }
 }

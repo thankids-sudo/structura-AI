@@ -41,6 +41,26 @@ class RccMembersTest {
     }
 
     @Test
+    fun footing_withMoment() {
+        val base = FootingInput(serviceLoad = 1000.0, colB = 300.0, colD = 500.0, sbc = 200.0, fck = 25.0, fy = 500.0)
+        val r0 = FootingDesigner.design(base)
+        val r = FootingDesigner.design(base.copy(momentL = 120.0, factoredMomentL = 180.0))
+        assertTrue(r.lengthL > r0.lengthL)
+        assertTrue(r.qMaxService <= 200.0 + 1e-6 && r.qMinService >= 0.0)
+        // pressure formula P(1+0.1)/A ± 6M/(B L²)
+        val l = r.lengthL / 1000; val b = r.widthB / 1000
+        near(1100.0 / (l * b) + 6 * 120.0 / (b * l * l), r.qMaxService, 1e-9)
+        // flexure: heavier side moment larger than the uniform-pressure value on the same plan
+        val qu = 1500.0 / (l * b); val c = (l - 0.5) / 2
+        assertTrue(r.astL >= 0.0012 * r.widthB * (r.d + 62.0) - 1e-6)
+        val muUniform = qu * b * c * c / 2
+        val k = 12 * 180.0 / (b * l * l * l); val a = c; val cc = 0.25
+        near(muUniform + b * k * (a * a * a / 3 + cc * a * a / 2), b * (qu * a * a / 2 + k * (a * a * a / 3 + cc * a * a / 2)), 1e-12)
+        assertTrue(r.checks.first { it.item == "No tension under base" }.status == Status.PASS)
+        assertTrue(r0.checks.none { it.item == "No tension under base" })
+    }
+
+    @Test
     fun restrainedSlab_table26() {
         val c = SlabDesigner.table26(SlabEdgeCase.INTERIOR, 1.0)
         near(0.032, c[0], 1e-12); near(0.024, c[1], 1e-12); near(0.032, c[2], 1e-12); near(0.024, c[3], 1e-12)
