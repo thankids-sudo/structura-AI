@@ -105,11 +105,17 @@ object Modal {
         // very high, non-participating modes instead of making the reduced mass matrix singular
         val maxM = (0 until n).maxOfOrNull { mr[it][it] } ?: 0.0
         if (maxM <= 0) throw UnstableModelException("No mass in the model — switch on self-weight or add gravity loads.")
-        for (i in 0 until n) mr[i][i] += 1e-9 * maxM
+        for (i in 0 until n) mr[i][i] += 1e-6 * maxM
         val lk = cholesky(Array(n) { kr[it].copyOf() }) ?: throw UnstableModelException("Model is unstable — fix supports before modal analysis.")
 
         val p = minOf(n, maxOf(2 * nModes, nModes + 8))
         val q = minOf(nModes, n)
+        if (n <= 150) {
+            // small system: solve the full generalized eigenproblem directly (exact)
+            val (ev, qv) = generalizedEigen(kr, mr) ?: throw IllegalStateException("Modal analysis failed (mass matrix)")
+            return System(mesh, chains, nDof, m, free, mr, DoubleArray(q) { maxOf(ev[it], 0.0) },
+                (0 until q).map { c -> DoubleArray(n) { qv[it][c] } })
+        }
         // starting vectors: diagonal-mass weighted unit vectors (Bathe's choice)
         var x = Array(n) { r -> DoubleArray(p) { c -> if (c == 0) mr[r][r] else if ((r % p) == c) 1.0 else 0.0 } }
         var lambdas = DoubleArray(p)
