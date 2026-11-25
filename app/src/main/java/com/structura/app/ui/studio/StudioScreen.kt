@@ -50,6 +50,7 @@ import com.structura.app.ui.fem.Camera
 import com.structura.app.ui.fem.FrameView3D
 import com.structura.app.ui.fem.Plane
 import com.structura.app.ui.fem.ResultView
+import com.structura.core.steel.SteelModelCheck
 import com.structura.app.ui.fem.ResultsSummary
 import com.structura.app.ui.fem.TapInfo
 import com.structura.app.ui.fem.WorkPlane
@@ -160,13 +161,17 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
     var eqSoil by remember { mutableStateOf(Seismic.Soil.II) }
     var eqBuilding by remember { mutableStateOf(Seismic.BuildingType.RC_MRF) }
     var seismicEnv by remember { mutableStateOf(false) }
+    var steel by remember { mutableStateOf<List<SteelModelCheck.MemberCheck>>(emptyList()) }
+    var showUtil by remember { mutableStateOf(true) }
+    var steelK by remember { mutableStateOf(1.0) }
+    var steelLlt by remember { mutableStateOf(1.0) }
 
     fun d(s: String, def: Double = 0.0) = s.replace(',', '.').toDoubleOrNull() ?: def
 
     fun commit(m: FrameModel, msg: String? = null) {
         history = (history.take(pos + 1) + m).takeLast(80)
         pos = history.size - 1
-        results = null; buckling = null; env = emptyList(); modal = null; seismic = null; seismicEnv = false
+        results = null; buckling = null; env = emptyList(); modal = null; seismic = null; seismicEnv = false; steel = emptyList()
         if (view != ResultView.MODEL) view = ResultView.MODEL
         message = msg
     }
@@ -275,6 +280,27 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 t.member != null -> commit(ModelEditor.deleteMember(model, t.member), "M${t.member} deleted")
                 t.panel != null -> commit(ModelEditor.deletePanel(model, t.panel), "P${t.panel} deleted")
             }
+        }
+    }
+
+    fun runSteel() {
+        val steelMembers = model.members.count { SteelModelCheck.isSteel(it.material) && SteelModelCheck.steelSection(it.section) != null }
+        if (steelMembers == 0) {
+            message = "No checkable steel members — assign an IS 808 rolled section or SHS/RHS/CHS with Steel material (Member tool → edit)."
+            return
+        }
+        busy = true; message = null
+        scope.launch {
+            try {
+                val uls = LoadCombination.isLimitState(LoadCase.WL in model.loadCases)
+                steel = withContext(Dispatchers.Default) {
+                    SteelModelCheck.check(model, FrameSolver.analyseAll(model, uls), steelK, steelLlt).sortedByDescending { it.utilisation }
+                }
+                view = ResultView.MODEL; showUtil = true
+                val bad = steel.count { !it.ok }
+                message = "IS 800: ${steel.size} steel members checked over ${uls.size} ULS combinations — " +
+                    if (bad == 0) "all OK ✔ (max η = ${"%.3f".format(steel.first().utilisation)})" else "$bad fail ✘. Tap a member for its check sheet."
+            } catch (e: Exception) { message = "Steel check: ${e.message}" } finally { busy = false }
         }
     }
 
@@ -407,7 +433,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                             val cs = combos.ifEmpty { LoadCombination.isLimitState(LoadCase.WL in model.loadCases) }
                             val json = withContext(Dispatchers.Default) {
                                 val all = FrameSolver.analyseAll(model, cs)
-                                EngineeringJson.build(model, all, FemReport.envelope(all.map { it.second }), buckling, modal, seismic = seismic)
+                                EngineeringJson.build(model, all, FemReport.envelope(all.map { it.second }), buckling, modal, seismic = seismic, steel = steel)
                             }
                             shareTextFile(context, "${model.title.replace(' ', '_')}.engineering.json", "application/json", json, "Structura AI — engineering JSON")
                         } catch (e: Exception) { message = "JSON export: ${e.message}" } finally { busy = false }
@@ -428,6 +454,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                         combos.ifEmpty { LoadCombination.isLimitState(LoadCase.WL in model.loadCases) }, buckling,
                         modal = modal,
                         seismic = seismic,
+                        steel = steel,
                     )
                     shareTextFile(context, "StructuraAI_report.html", "text/html", html, "Structura AI — analysis report")
                 }, label = { Text("↓ HTML report") })
@@ -463,6 +490,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                     pendingNode = pending,
                     selectedPanel = selPanel,
                     pendingNodes = pendingPanel + pendingBay,
+                    memberUtil = if (showUtil && steel.isNotEmpty()) steel.associate { it.member to it.utilisation } else null,
                     buckling = buckling,
                     onTap = { onTap(it) },
                     modeShape = modal?.modes?.getOrNull(modeIdx)?.shape,
@@ -569,6 +597,10 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 OutlinedButton(onClick = { runBuckling() }, enabled = !busy && model.members.isNotEmpty(), modifier = Modifier.weight(1f)) { Text("Buckling λcr") }
                 OutlinedButton(onClick = { runModal() }, enabled = !busy && model.members.isNotEmpty(), modifier = Modifier.weight(1f)) { Text("♫ Modal") }
             }
+            SteelCard(
+                steel, busy, steelK, { steelK = it; steel = emptyList() }, steelLlt, { steelLlt = it; steel = emptyList() },
+                showUtil, { showUtil = it }, selMember, onRun = { runSteel() }, onPick = { selMember = it },
+            )
             OutlinedButton(onClick = { showSeismic = !showSeismic }, modifier = Modifier.fillMaxWidth()) {
                 Text(if (showSeismic) "Hide seismic (IS 1893)" else "🌐 Seismic — IS 1893 response spectrum")
             }

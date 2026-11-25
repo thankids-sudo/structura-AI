@@ -20,7 +20,7 @@ Each step is built, tested and committed separately.
 - [x] 2.2 Laterally supported / unsupported beams (Cl. 8.2), shear (Cl. 8.4), deflection (Table 6)
 - [x] 2.3 Compression members (Cl. 7.1, buckling curves a–d); beam-columns (Cl. 9.3)
 - [x] 2.4 Tension members (Cl. 6); bolted & welded connections (Cl. 10)
-- [ ] 2.5 Steel member checks straight from 3D Studio results
+- [x] 2.5 Steel member checks straight from 3D Studio results (SteelModelCheck: all ULS combos, η colouring, report + JSON)
 
 ## Phase 3: Frame Analysis + AI
 - [x] 3.1 3D frame FEM (6 DOF/node): continuous beam, portal frame and space frame templates, N/V/M diagrams, deformed shape

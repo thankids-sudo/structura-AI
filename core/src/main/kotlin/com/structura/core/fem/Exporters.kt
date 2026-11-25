@@ -49,6 +49,7 @@ object EngineeringJson {
         modal: ModalResult? = null,
         stations: Int = 10,
         seismic: Seismic.Result? = null,
+        steel: List<com.structura.core.steel.SteelModelCheck.MemberCheck> = emptyList(),
     ): String {
         val root = linkedMapOf<String, Any?>(
             "format" to "structura-ai-engineering",
@@ -113,6 +114,12 @@ object EngineeringJson {
                             "modes" to d.rows.map { mapOf("mode" to it.mode, "T_s" to it.period, "SaG" to it.saG, "Ah" to it.ah, "massRatio" to it.massRatio, "VB_kN" to it.baseShear) },
                             "drifts" to d.drifts.map { mapOf("z" to it.z, "h" to it.height, "drift" to it.drift, "ok" to it.ok) })
                     })
+            },
+            "steelChecksIS800" to steel.map {
+                mapOf("member" to it.member, "section" to it.section, "grade" to it.grade, "governingCombination" to it.combination,
+                    "P_kN_compressionPositive" to it.p, "Mmajor_kNm" to it.mMajor, "Mminor_kNm" to it.mMinor, "V_kN" to it.v,
+                    "utilisation" to it.utilisation, "ok" to it.ok,
+                    "checks" to it.result.checks.map { c -> mapOf("item" to c.item, "value" to c.value, "requirement" to c.requirement, "status" to c.status.name, "clause" to c.clause) })
             },
             "modal" to modal?.let { md ->
                 mapOf("massSource" to md.massSource, "totalMass_t" to md.totalMass, "cumulativeParticipation" to md.cumulative,

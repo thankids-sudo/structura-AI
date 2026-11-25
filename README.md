@@ -5,7 +5,7 @@ Android app for structural design to Indian Standards. It has four modules, buil
 | # | Module | Codes | Status |
 |---|--------|-------|--------|
 | 1 | **RCC Design**: beam, slab, column, footing, BBS | IS 456, IS 875, IS 1893, SP 16 | **Beam design + UCS detail drawing / DXF done** |
-| 2 | **Steel Design**: beams, columns, tension members, connections | IS 800, IS 808, IS 4923 | Planned |
+| 2 | **Steel Design**: beams, columns, tension members, connections, checks from 3D Studio | IS 800, IS 808, IS 4923 | Done |
 | 3 | **FEM Analysis + AI**: 3D frame FEM (RFEM-style), N/V/M diagrams, deformed shape, AI result check | Direct stiffness method | **3D frame solver done** |
 | 4 | **Drawing → Structure AI**: plan import, grid/column layout, load take-down, member sizing | — | Planned |
 
@@ -92,6 +92,15 @@ Every check carries its clause:
 - **Connections:**
   - Bearing bolts 4.6 / 8.8: shear and bearing (kb), pitch, edge distance, long-joint flag (Cl. 10.3).
   - Fillet welds: fwd, effective length, minimum size (Table 21) and maximum size (Cl. 10.5).
+
+### Steel checks from 3D Studio (RFEM "steel design add-on" style)
+- **Assign:** Member tool → Section "IS 808 rolled" (ISMB / ISHB / ISMC) or SHS / RHS / CHS, Material "Steel" with grade E250 / E350 (IS 2062).
+- **Run:** ▶ Analyse is optional — "⚙ Steel checks" analyses every IS 456 Table 18 ULS combination itself and checks each steel member with `SteelModelCheck.check` (core/steel/SteelModelCheck.kt).
+- **Forces used:** largest compression (or tension), |Mz,major| (FEM My), |My,minor| (FEM Mz) and |V| along the member, combined conservatively even if they occur at different stations.
+- **Checks:** class (Table 2), beam-column Cl. 9.3.1.3 + 9.3.2.2 (or tension + bending Cl. 9.3.1.3), LTB Cl. 8.2.2, shear Cl. 8.4. The governing combination is kept per member.
+- **Lengths:** K = 0.65 / 0.8 / 1.0 / 1.2 / 2.0 applied to node-to-node length about both axes; LLT/L = 0 (restrained) … 1.2. Split members at bracing points to shorten L.
+- **Output:** members coloured by η in 3D (red > 1.0), sortable table, tap for the full clause-by-clause check sheet; section 11 of the HTML report and `steelChecksIS800` in Engineering JSON.
+- FEM section mapping: `SteelModelCheck.femSection` puts the IS 808 major axis (Izz) in FEM Iy — web vertical, gravity bending = major axis.
 
 ## FEM analysis (RFEM-style 3D frame)
 

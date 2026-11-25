@@ -23,6 +23,7 @@ object HtmlReport {
         project: String = model.title,
         modal: ModalResult? = null,
         seismic: Seismic.Result? = null,
+        steel: List<com.structura.core.steel.SteelModelCheck.MemberCheck> = emptyList(),
     ): String = buildString {
         fun f(v: Double, d: Int = 2) = String.format(Locale.US, "%.${d}f", v)
         fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -206,6 +207,22 @@ object HtmlReport {
                 append("<b>design VB = ${f(d.baseShear, 2)} kN</b>.</p>")
                 if (d.drifts.isNotEmpty()) table(listOf("Level Z (m)", "Storey height (m)", "Drift ratio", "Limit 0.004 (Cl. 7.11.1)"), d.drifts.map {
                     listOf(f(it.z, 3), f(it.height, 3), f(it.drift, 5), if (it.ok) "✔ OK" else "✘ exceeds")
+                })
+            }
+        }
+
+        if (steel.isNotEmpty()) {
+            append("<h2>11. Steel member checks — IS 800:2007</h2>")
+            append("<p>Each steel member checked for every ULS combination; governing combination shown. Largest axial force, moments and shear along the member ")
+            append("are combined (conservative). Effective length KL = L, LLT = L unless stated. Clauses: classification Table 2; tension Cl. 6; compression Cl. 7.1.2; ")
+            append("bending Cl. 8.2 with LTB Cl. 8.2.2 / Annex E; shear Cl. 8.4; combined Cl. 9.3.1 / 9.3.2.2.</p>")
+            table(listOf("Member", "Section", "Grade", "Governing", "P (kN, +C)", "Mz,maj (kN·m)", "My,min (kN·m)", "V (kN)", "η", "Status"), steel.map {
+                listOf("M${it.member}", esc(it.section), it.grade, esc(it.combination), f(it.p), f(it.mMajor), f(it.mMinor), f(it.v), f(it.utilisation, 3), if (it.ok) "✔ OK" else "✘ REVISE")
+            })
+            steel.maxByOrNull { it.utilisation }?.let { g ->
+                append("<p><b>Critical member M${g.member} (${esc(g.section)}), η = ${f(g.utilisation, 3)}:</b></p>")
+                table(listOf("Check", "Value", "Requirement", "Status", "Clause"), g.result.checks.map {
+                    listOf(esc(it.item), esc(it.value), esc(it.requirement), it.status.name, esc(it.clause))
                 })
             }
         }

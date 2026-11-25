@@ -210,6 +210,8 @@ fun FrameView3D(
     modeLabel: String = "",
     selectedPanel: Int? = null,
     pendingNodes: List<Int> = emptyList(),
+    /** Member id → design utilisation (IS 800); colours members in the MODEL view when not null. */
+    memberUtil: Map<Int, Double>? = null,
 ) {
     var canvasSize by remember { mutableStateOf(Size(1f, 1f)) }
     val tapCallback by rememberUpdatedState(onNodeTap)
@@ -294,9 +296,10 @@ fun FrameView3D(
             }
             for (m in model.members) {
                 val sel = m.id == selectedMember
+                val u = if (!faded) memberUtil?.get(m.id) else null
                 drawLine(
-                    if (sel) Color(0xFFFFA000) else if (faded) ink.copy(alpha = 0.25f) else ink,
-                    pj.screen(model.node(m.i).pos), pj.screen(model.node(m.j).pos), if (sel) 6f else if (faded) 2f else 4f,
+                    if (sel) Color(0xFFFFA000) else if (u != null) (if (u > 1.0) Color(0xFFD50000) else heat(u.toFloat())) else if (faded) ink.copy(alpha = 0.25f) else ink,
+                    pj.screen(model.node(m.i).pos), pj.screen(model.node(m.j).pos), if (sel) 6f else if (u != null) 7f else if (faded) 2f else 4f,
                 )
                 if (m.hingeI || m.hingeJ) {
                     val a = model.node(m.i).pos; val b = model.node(m.j).pos
@@ -307,6 +310,7 @@ fun FrameView3D(
                 }
             }
             supports(pj, model)
+            if (!faded && memberUtil != null) utilLegend()
             for (n in model.nodes) {
                 val p = pj.screen(n.pos)
                 if (n.id == selectedNode || n.id == pendingNode || n.id in pendingNodes) drawCircle(Color(0xFFFFA000), 16f, p, style = Stroke(4f))
@@ -503,6 +507,18 @@ private fun DrawScope.drawArrow(from: Offset, to: Offset, c: Color, w: Float) {
     val h = 7f + w * 2
     drawLine(c, to, to - u * h + n * (h * 0.5f), w)
     drawLine(c, to, to - u * h - n * (h * 0.5f), w)
+}
+
+private fun DrawScope.utilLegend() {
+    val x0 = size.width - 150f
+    val y0 = 16f
+    for (k in 0 until 20) drawRect(heat(k / 19f), Offset(x0 + k * 6f, y0), Size(6f, 14f))
+    drawRect(Color(0xFFD50000), Offset(x0 + 124f, y0), Size(14f, 14f))
+    val paint = Paint().apply { textSize = 22f; isAntiAlias = true; color = android.graphics.Color.DKGRAY }
+    drawIntoCanvas {
+        it.nativeCanvas.drawText("η 0", x0, y0 + 36f, paint)
+        it.nativeCanvas.drawText("1.0  >1", x0 + 72f, y0 + 36f, paint)
+    }
 }
 
 private fun DrawScope.legend(maxD: Double) {

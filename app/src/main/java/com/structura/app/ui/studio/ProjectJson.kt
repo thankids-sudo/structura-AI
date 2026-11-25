@@ -31,7 +31,7 @@ object ProjectJson {
         o.put("materials", JSONArray(mats.map { JSONObject().put("name", it.name).put("E", it.e).put("G", it.g).put("gamma", it.gamma) }))
         o.put("sections", JSONArray(secs.map {
             JSONObject().put("name", it.name).put("A", it.a).put("Iy", it.iy).put("Iz", it.iz).put("J", it.j).put("b", it.b).put("h", it.h)
-                .put("Asy", it.asy).put("Asz", it.asz).put("shape", it.shape).put("t", it.t)
+                .put("Asy", it.asy).put("Asz", it.asz).put("shape", it.shape).put("t", it.t).put("tw", it.tw)
         }))
         o.put("nodes", JSONArray(m.nodes.map { JSONObject().put("id", it.id).put("x", it.x).put("y", it.y).put("z", it.z) }))
         o.put("members", JSONArray(m.members.map {
@@ -69,7 +69,7 @@ object ProjectJson {
         val secs = arr("sections") {
             Section(it.getString("name"), it.getDouble("A"), it.getDouble("Iy"), it.getDouble("Iz"), it.getDouble("J"),
                 it.optDouble("b", 0.0), it.optDouble("h", 0.0), it.optDouble("Asy", 0.0), it.optDouble("Asz", 0.0),
-                it.optString("shape", "GENERAL"), it.optDouble("t", 0.0))
+                it.optString("shape", "GENERAL"), it.optDouble("t", 0.0), it.optDouble("tw", 0.0))
         }
         return FrameModel(
             nodes = arr("nodes") { Node(it.getInt("id"), it.getDouble("x"), it.getDouble("y"), it.getDouble("z")) },

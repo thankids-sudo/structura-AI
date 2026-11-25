@@ -33,5 +33,10 @@ class SteelModelCheckTest {
         val b = checks.first { it.section == "ISMB 300" }
         val direct = IS800.beamColumn(beam, SteelGrade.E250, maxOf(b.p, 0.0), b.mMajor, b.mMinor, 6000.0, 6000.0, 6000.0)
         assertTrue(b.utilisation >= direct.utilisation - 1e-9)
+        val html = com.structura.core.fem.HtmlReport.build(m, null, emptyList(), combos, steel = checks)
+        assertTrue(html.contains("Steel member checks"))
+        val json = com.structura.core.fem.EngineeringJson.build(m, res, steel = checks)
+        assertTrue(json.contains("steelChecksIS800"))
+        org.json.JSONObject(json)
     }
 }

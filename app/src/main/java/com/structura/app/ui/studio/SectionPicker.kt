@@ -22,8 +22,10 @@ import androidx.compose.ui.unit.dp
 import com.structura.core.fem.Material
 import com.structura.core.fem.Section
 import com.structura.core.fem.SectionCatalogue
+import com.structura.core.steel.SteelModelCheck
+import com.structura.core.steel.SteelSection
 
-enum class ShapeKind(val label: String) { RECT("Rectangle"), CHS("CHS ○"), SHS("SHS □"), RHS("RHS ▭"), CATALOGUE("Catalogue") }
+enum class ShapeKind(val label: String) { RECT("Rectangle"), CHS("CHS ○"), SHS("SHS □"), RHS("RHS ▭"), STEEL_ROLLED("IS 808 rolled"), CATALOGUE("Tube catalogue") }
 enum class MaterialKind(val label: String) { CONCRETE("Concrete"), STEEL("Steel"), GFRP("GFRP"), CUSTOM("Custom E/G/γ") }
 
 /** Section + material choice shared by the Member tool and the member editor. All inputs in mm / MPa / kN/m³. */
@@ -39,8 +41,15 @@ class SectionSpec {
     var e by mutableStateOf("18000")
     var g by mutableStateOf("3200")
     var gamma by mutableStateOf("19")
+    var rolledFamily by mutableStateOf("ISMB")
+    var rolledName by mutableStateOf("ISMB 300")
+    var steelGrade by mutableStateOf("E250")
 
     private fun n(s: String, def: Double) = s.replace(',', '.').toDoubleOrNull() ?: def
+
+    fun rolledEntries() = SteelSection.library.filter {
+        it.name.startsWith(rolledFamily) && (it.family == SteelSection.Family.I || it.family == SteelSection.Family.CHANNEL)
+    }
 
     fun catalogueEntries() = SectionCatalogue.entries.filter { it.family == family }
 
@@ -49,12 +58,14 @@ class SectionSpec {
         ShapeKind.CHS -> Section.chs(n(d, 100.0) / 1000, n(t, 5.0) / 1000)
         ShapeKind.SHS -> Section.rhs(n(b, 100.0) / 1000, n(b, 100.0) / 1000, n(t, 5.0) / 1000)
         ShapeKind.RHS -> Section.rhs(n(b, 50.0) / 1000, n(d, 100.0) / 1000, n(t, 5.0) / 1000)
+        ShapeKind.STEEL_ROLLED -> SteelModelCheck.femSection(
+            SteelSection.library.firstOrNull { it.name == rolledName } ?: rolledEntries().first())
         ShapeKind.CATALOGUE -> catalogueEntries().getOrElse(catIndex) { catalogueEntries().first() }.section
     }
 
     fun material(): Material = when (material) {
         MaterialKind.CONCRETE -> Material.concrete(n(fck, 25.0))
-        MaterialKind.STEEL -> Material.steel()
+        MaterialKind.STEEL -> Material.steel(if (steelGrade == "E350") 350.0 else 250.0)
         MaterialKind.GFRP -> Material.gfrp()
         MaterialKind.CUSTOM -> Material.custom("E ${e} / G ${g} MPa", n(e, 18000.0), n(g, 3200.0), n(gamma, 19.0))
     }
@@ -62,6 +73,7 @@ class SectionSpec {
     /** Load an existing member's section into the picker. */
     fun from(s: Section, m: Material) {
         when (s.shape) {
+            "I", "CHANNEL" -> { shape = ShapeKind.STEEL_ROLLED; rolledName = s.name; rolledFamily = s.name.substringBefore(' ') }
             "CHS" -> { shape = ShapeKind.CHS; d = mm(s.h); t = mm(s.t) }
             "SHS" -> { shape = ShapeKind.SHS; b = mm(s.b); t = mm(s.t) }
             "RHS" -> { shape = ShapeKind.RHS; b = mm(s.b); d = mm(s.h); t = mm(s.t) }
@@ -70,7 +82,7 @@ class SectionSpec {
         e = mm(m.e); g = mm(m.g); gamma = m.gamma.toString()
         material = when {
             m.name.startsWith("M") && m.gamma == 25.0 -> { fck = m.name.drop(1); MaterialKind.CONCRETE }
-            m.name.startsWith("E") && m.gamma == 78.5 -> MaterialKind.STEEL
+            m.name.startsWith("E") && m.gamma == 78.5 -> { steelGrade = if (m.name.contains("350")) "E350" else "E250"; MaterialKind.STEEL }
             m.name.startsWith("GFRP") -> MaterialKind.GFRP
             else -> MaterialKind.CUSTOM
         }
@@ -107,6 +119,18 @@ fun SectionPicker(spec: SectionSpec) {
                 Field("H (mm)", spec.d, Modifier.weight(1f)) { spec.d = it }
                 Field("t (mm)", spec.t, Modifier.weight(1f)) { spec.t = it }
             }
+            ShapeKind.STEEL_ROLLED -> {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("ISMB", "ISHB", "ISMC").forEach { f ->
+                        FilterChip(f == spec.rolledFamily, { spec.rolledFamily = f; spec.rolledName = spec.rolledEntries().first().name; spec.material = MaterialKind.STEEL }, { Text(f) })
+                    }
+                }
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    spec.rolledEntries().forEach { en -> FilterChip(en.name == spec.rolledName, { spec.rolledName = en.name; spec.material = MaterialKind.STEEL }, { Text(en.name) }) }
+                }
+                Text("IS 808 hot-rolled; web vertical (major axis = member local y, bending My). Pick Steel material for IS 800 checks.",
+                    style = MaterialTheme.typography.labelSmall)
+            }
             ShapeKind.CATALOGUE -> {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     SectionCatalogue.families.forEach { f -> FilterChip(f == spec.family, { spec.family = f; spec.catIndex = 0 }, { Text(f) }) }
@@ -133,7 +157,10 @@ fun SectionPicker(spec: SectionSpec) {
             }
             MaterialKind.GFRP -> Text("GFRP pultruded, illustrative: E 23 000 MPa, G 3 500 MPa, γ 19 kN/m³. Use Custom for tested values.",
                 style = MaterialTheme.typography.labelSmall)
-            MaterialKind.STEEL -> Text("Steel E250: E 200 000 MPa, G 76 900 MPa, γ 78.5 kN/m³ (IS 800).", style = MaterialTheme.typography.labelSmall)
+            MaterialKind.STEEL -> Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                listOf("E250", "E350").forEach { gname -> FilterChip(gname == spec.steelGrade, { spec.steelGrade = gname }, { Text(gname) }) }
+                Text("IS 2062 · E 200 000 MPa, G 76 900 MPa, γ 78.5 kN/m³", style = MaterialTheme.typography.labelSmall)
+            }
         }
         val sec = runCatching { spec.section() }
         Text(
