@@ -130,10 +130,17 @@ fun SlabScreen(onBack: () -> Unit) = RccScaffold("RCC Slab — IS 456", onBack) 
     var dia by rememberSaveable { mutableStateOf("10") }
     var cover by rememberSaveable { mutableStateOf("20") }
     var type by rememberSaveable { mutableStateOf(SlabType.TWO_WAY_SS) }
+    var edge by rememberSaveable { mutableStateOf(com.structura.core.rcc.SlabEdgeCase.INTERIOR) }
     var out by remember { mutableStateOf<Pair<SlabInput, com.structura.core.rcc.SlabResult>?>(null) }
     var err by remember { mutableStateOf<String?>(null) }
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         SlabType.entries.forEach { k -> FilterChip(k == type, { type = k }, { Text(k.label) }) }
+    }
+    if (type == SlabType.TWO_WAY_RESTRAINED) {
+        Text("Edge condition (IS 456 Table 26)", style = MaterialTheme.typography.labelMedium)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            com.structura.core.rcc.SlabEdgeCase.entries.forEach { k -> FilterChip(k == edge, { edge = k }, { Text(k.label) }) }
+        }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Field(if (type == SlabType.CANTILEVER) "Length (m)" else "lx (m)", lx, Modifier.weight(1f)) { lx = it }
@@ -153,7 +160,7 @@ fun SlabScreen(onBack: () -> Unit) = RccScaffold("RCC Slab — IS 456", onBack) 
     Button(onClick = {
         err = null
         runCatching {
-            val inp = SlabInput(n(lx, 4.0), n(ly, 5.0), n(t, 150.0), n(cover, 20.0), n(dia, 10.0), 8.0, n(ff, 1.0), n(ll, 3.0), n(fck, 20.0), n(fy, 500.0), type)
+            val inp = SlabInput(n(lx, 4.0), n(ly, 5.0), n(t, 150.0), n(cover, 20.0), n(dia, 10.0), 8.0, n(ff, 1.0), n(ll, 3.0), n(fck, 20.0), n(fy, 500.0), type, edge)
             inp to SlabDesigner.design(inp)
         }.onSuccess { out = it }.onFailure { err = it.message; out = null }
     }, modifier = Modifier.fillMaxWidth()) { Text("Design slab") }
@@ -162,9 +169,18 @@ fun SlabScreen(onBack: () -> Unit) = RccScaffold("RCC Slab — IS 456", onBack) 
         CheckSheet(r.isSafe, listOf(
             String.format(Locale.US, "wu = %.2f kN/m² · Mx = %.2f, My = %.2f kN·m/m", r.wu, r.mx, r.my),
             "Short span: φ${inp.barDia.toInt()} @ ${r.spacingX.toInt()} c/c (d = ${r.dx.toInt()} mm)",
-            if (inp.type == SlabType.TWO_WAY_SS) "Long span: φ${inp.barDia.toInt()} @ ${r.spacingY.toInt()} c/c" else "Distribution: φ${inp.distBarDia.toInt()} @ ${r.spacingY.toInt()} c/c",
-            "Table 27 assumes corners free to lift (no torsion steel). For restrained slabs (Table 26) design the edges separately.",
-        ), r.checks, r.steps)
+            if (inp.twoWay) "Long span: φ${inp.barDia.toInt()} @ ${r.spacingY.toInt()} c/c (bottom)" else "Distribution: φ${inp.distBarDia.toInt()} @ ${r.spacingY.toInt()} c/c",
+        ) + (r.top?.let { tp ->
+            listOfNotNull(
+                if (tp.spacingXNeg > 0) String.format(Locale.US, "Top over long edges: Mx− = %.2f kN·m/m → φ%d @ %d c/c", tp.mxNeg, inp.barDia.toInt(), tp.spacingXNeg.toInt()) else null,
+                if (tp.spacingYNeg > 0) String.format(Locale.US, "Top over short edges: My− = %.2f kN·m/m → φ%d @ %d c/c", tp.myNeg, inp.barDia.toInt(), tp.spacingYNeg.toInt()) else null,
+                if (tp.torsionFullCorners + tp.torsionHalfCorners > 0)
+                    String.format(Locale.US, "Corner torsion: %d full (φ%d @ %d, 4 layers) + %d half, over %.2f m each way (D-1.8/1.9)",
+                        tp.torsionFullCorners, inp.barDia.toInt(), tp.torsionSpacing.toInt(), tp.torsionHalfCorners, tp.torsionExtent)
+                else "No corner torsion steel — all corners continuous (D-1.10)",
+            )
+        } ?: if (inp.type == SlabType.TWO_WAY_SS) listOf("Table 27: corners free to lift, no torsion steel. Choose Table 26 for slabs cast with beams.") else emptyList()),
+        r.checks, r.steps)
         BbsTable(BarBendingSchedule.slab(inp, r), "slab")
     }
 }

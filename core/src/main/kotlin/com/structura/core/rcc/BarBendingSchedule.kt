@@ -61,10 +61,33 @@ object BarBendingSchedule {
         val nx = ceil(ly / res.spacingX).toInt() + 1
         rows += BbsRow(name, "S1", "Short-span bars @ ${res.spacingX.toInt()} c/c", inp.barDia, nx, "— straight (hooks/cranks as detailed)",
             r10(lx + 2 * 10 * inp.barDia - 2 * c), "lx − 2c + 2×10φ anchorage")
-        val dia2 = if (inp.type == SlabType.TWO_WAY_SS) inp.barDia else inp.distBarDia
+        val dia2 = if (inp.twoWay) inp.barDia else inp.distBarDia
         val ny = ceil(lx / res.spacingY).toInt() + 1
-        rows += BbsRow(name, "S2", if (inp.type == SlabType.TWO_WAY_SS) "Long-span bars @ ${res.spacingY.toInt()} c/c" else "Distribution bars @ ${res.spacingY.toInt()} c/c",
+        rows += BbsRow(name, "S2", if (inp.twoWay) "Long-span bars @ ${res.spacingY.toInt()} c/c" else "Distribution bars @ ${res.spacingY.toInt()} c/c",
             dia2, ny, "— straight", r10(ly + 2 * 10 * dia2 - 2 * c), "ly − 2c + 2×10φ")
+        res.top?.let { t ->
+            val leg = inp.thickness - 2 * c
+            val e = inp.edgeCase
+            val contLong = 2 - e.discLong; val contShort = 2 - e.discShort
+            if (t.spacingXNeg > 0 && contLong > 0) {
+                val n = (ceil(ly / t.spacingXNeg).toInt() + 1) * contLong
+                rows += BbsRow(name, "S3", "Top bars over continuous long edge(s) ×$contLong @ ${t.spacingXNeg.toInt()} c/c", inp.barDia, n, "⌐¬ (legs down to bottom cover)",
+                    r10(0.3 * lx + 2 * leg - 2 * 2 * inp.barDia), "0.3·lx (this panel) + 2 × leg ${leg.toInt()} − 2×2φ; add the 0.3·l on the adjoining panel side")
+            }
+            if (t.spacingYNeg > 0 && contShort > 0) {
+                val n = (ceil(lx / t.spacingYNeg).toInt() + 1) * contShort
+                rows += BbsRow(name, "S4", "Top bars over continuous short edge(s) ×$contShort @ ${t.spacingYNeg.toInt()} c/c", inp.barDia, n, "⌐¬ (legs down to bottom cover)",
+                    r10(0.3 * lx + 2 * leg - 2 * 2 * inp.barDia), "0.3·lx + 2 × leg − 2×2φ (adjoining side extra)")
+            }
+            if (t.torsionFullCorners + t.torsionHalfCorners > 0 && t.torsionSpacing > 0) {
+                val ext = t.torsionExtent * 1000
+                val perLayer = ceil(ext / t.torsionSpacing).toInt() + 1
+                val nFull = perLayer * 4 * t.torsionFullCorners
+                val nHalf = (ceil(ext / (2 * t.torsionSpacing)).toInt() + 1) * 4 * t.torsionHalfCorners
+                rows += BbsRow(name, "S5", "Corner torsion mesh, 4 layers (${t.torsionFullCorners} full @ ${t.torsionSpacing.toInt()}, ${t.torsionHalfCorners} half @ ${(2 * t.torsionSpacing).toInt()})",
+                    inp.barDia, nFull + nHalf, "— straight", r10(ext - c), "lx/5 − c")
+            }
+        }
         return rows
     }
 

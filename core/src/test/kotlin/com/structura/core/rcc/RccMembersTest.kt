@@ -41,6 +41,36 @@ class RccMembersTest {
     }
 
     @Test
+    fun restrainedSlab_table26() {
+        val c = SlabDesigner.table26(SlabEdgeCase.INTERIOR, 1.0)
+        near(0.032, c[0], 1e-12); near(0.024, c[1], 1e-12); near(0.032, c[2], 1e-12); near(0.024, c[3], 1e-12)
+        val t6 = SlabDesigner.table26(SlabEdgeCase.TWO_LONG, 1.25)
+        near(0.0, t6[0], 0.0); near(0.054, t6[1], 1e-9); near(0.045, t6[2], 1e-12)
+        near(0.107, SlabDesigner.table26(SlabEdgeCase.FOUR, 2.0)[1], 1e-12)
+        org.junit.Assert.assertEquals(0 to 0, SlabDesigner.torsionCorners(SlabEdgeCase.INTERIOR))
+        org.junit.Assert.assertEquals(1 to 2, SlabDesigner.torsionCorners(SlabEdgeCase.TWO_ADJACENT))
+        org.junit.Assert.assertEquals(2 to 2, SlabDesigner.torsionCorners(SlabEdgeCase.THREE_LONG_CONT))
+        org.junit.Assert.assertEquals(4 to 0, SlabDesigner.torsionCorners(SlabEdgeCase.FOUR))
+
+        val inp = SlabInput(lx = 4.0, ly = 5.0, thickness = 150.0, finishes = 1.0, liveLoad = 3.0, fck = 20.0, fy = 500.0,
+            type = SlabType.TWO_WAY_RESTRAINED, edgeCase = SlabEdgeCase.TWO_ADJACENT)
+        val r = SlabDesigner.design(inp)
+        val ax = (0.065 + 0.071) / 2; val axp = (0.049 + 0.053) / 2
+        near(axp * r.wu * 16, r.mx, 1e-9)
+        near(0.035 * r.wu * 16, r.my, 1e-9)
+        val top = r.top!!
+        near(ax * r.wu * 16, top.mxNeg, 1e-9)
+        near(0.047 * r.wu * 16, top.myNeg, 1e-9)
+        org.junit.Assert.assertTrue(top.astXNeg > r.astX)
+        near(0.75 * r.astX, top.torsionArea, 1e-9)
+        // restrained interior panel needs less bottom steel than the simply supported Table 27 panel
+        val ss = SlabDesigner.design(inp.copy(type = SlabType.TWO_WAY_SS))
+        org.junit.Assert.assertTrue(r.mx < ss.mx)
+        val bbs = BarBendingSchedule.slab(inp, r)
+        org.junit.Assert.assertTrue(bbs.any { it.mark == "S3" } && bbs.any { it.mark == "S4" } && bbs.any { it.mark == "S5" })
+    }
+
+    @Test
     fun twoWaySlab_table27() {
         near(0.084, SlabDesigner.table27(1.2).first, 1e-12)
         near(0.053, SlabDesigner.table27(1.35).second, 1e-9)

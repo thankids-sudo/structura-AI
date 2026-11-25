@@ -73,7 +73,10 @@ Every check carries its clause:
 
 ## RCC member design (IS 456:2000)
 - **Beams:** singly, doubly and flanged T/L beams (Annex G-2.2; flange-width check Cl. 23.1.2; deflection with the Fig. 6 reduction). Bars that don't fit one layer go into two layers automatically (Cl. 26.3.2(b)) and d is recalculated to the bar centroid.
-- **Slabs:** one-way, cantilever, and two-way simply supported (Table 27 coefficients). Includes minimum steel, spacing, maximum bar size, shear with the slab factor k (Cl. 40.2.1.1) and deflection.
+- **Slabs:** one-way, cantilever, two-way simply supported (Table 27) and two-way restrained (Table 26). Includes minimum steel, spacing, maximum bar size, shear with the slab factor k (Cl. 40.2.1.1) and deflection.
+  - **Table 26 (corners held down):** all 9 edge cases; bottom steel from αx+, αy+; top steel over continuous edges from αx−, αy− (bars extended 0.3·lx, Annex D practice / SP 34).
+  - **Corner torsion steel:** 3/4·Ast,x in 4 layers over lx/5 where both edges are discontinuous (D-1.8), half where one is (D-1.9), none where both are continuous (D-1.10). The BBS adds marks S3/S4 (top bars) and S5 (torsion mesh).
+  - Deflection basic l/d: 26 (continuous) only when both long edges are continuous, otherwise 20 (conservative for end panels). ly/lx is clamped to 2.0; above that design as one-way.
 - **Columns:** slenderness (Cl. 25.1.2), minimum eccentricity (Cl. 25.4), additional moments with the k reduction for slender columns (Cl. 39.7). Uniaxial capacities come from strain compatibility (parabolic-rectangular concrete, Fig. 23 steel, εcu reduced when the whole section is in compression, Cl. 39.1). Then the biaxial check (Cl. 39.6) and tie rules (Cl. 26.5.3).
 - **Isolated footings:** plan size from SBC, moments at the column face, depth iterated for flexure, one-way shear and punching (ks·0.25√fck), central band, minimum steel, development length.
 - **Bar bending schedule** for every member, exported as CSV. Shape-specific cut lengths use IS 2502 bend deductions (90° = 2φ, 135° = 3φ) and unit weight d²/162; every row lists its formula.
