@@ -30,8 +30,10 @@ Each step is built, tested and committed separately.
 - [x] 3.3e Modal analysis (frequencies, mode shapes, mass participation)
 - [ ] 3.3e2 IS 1893 response spectrum (CQC) from the modal results
 - [x] 3.3f Timoshenko beams, hollow-section catalogue (steel + GFRP), rotational end springs
-- [ ] 3.3f2 Rigid end offsets, piecewise (trapezoidal) member loads
-- [ ] 3.3g Q4 flat-shell panels (slabs / walls) with panel mesh and pressure loads
+- [x] 3.3f2 Rigid end offsets, partial / trapezoidal member loads
+- [x] 3.3g Q4 flat-shell panels (slabs / walls) with panel mesh and pressure loads
+- [x] 3.3h Indian Standards reference + load assumptions calculators
+- [ ] 3.3i STAAD-style floor load transfer to beams, Engineering JSON export
 - [ ] 3.4 AI explains results and sanity-checks them (load path, unusual ratios, missing combinations)
 
 ## Phase 4: Drawing → Structure AI

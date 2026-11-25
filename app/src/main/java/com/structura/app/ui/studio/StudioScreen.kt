@@ -68,6 +68,7 @@ import com.structura.core.fem.LoadCombination
 import com.structura.core.fem.LoadDir
 import com.structura.core.fem.Material
 import com.structura.core.fem.MemberEnvelope
+import com.structura.core.fem.MemberLoad
 import com.structura.core.fem.Modal
 import com.structura.core.fem.ModalResult
 import com.structura.core.fem.ModelEditor
@@ -87,13 +88,15 @@ enum class Tool(val label: String, val hint: String) {
     FIX("Fix", "Tap a node: fixed support (tap again to remove)."),
     PIN("Pin", "Tap a node: pinned support (tap again to remove)."),
     LOAD("Load", "Tap a node to add the nodal load Fx, Fy, Fz in the chosen case."),
-    UDL("Member load", "Tap a member to add a uniform load q along global Z (− = downward)."),
-    DELETE("Delete", "Tap a node or member to delete it."),
+    UDL("Member load", "Tap a member to add a distributed load (uniform, partial or trapezoidal; − = downward in global Z)."),
+    PANEL("Panel", "Tap 4 nodes (or grid points) around the panel, anticlockwise seen from above."),
+    PANEL_MESH("Panel mesh", "Tap a panel to split it into nx × ny panels (edge beams are split to stay connected)."),
+    DELETE("Delete", "Tap a node, member or panel to delete it."),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> Unit) {
+fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> Unit, onStandards: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val camera = remember { Camera() }
@@ -114,6 +117,14 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
     var fy by remember { mutableStateOf("0") }
     var fz by remember { mutableStateOf("-10") }
     var q by remember { mutableStateOf("-10") }
+    var q2 by remember { mutableStateOf("-10") }
+    var la by remember { mutableStateOf("0") }
+    var lb by remember { mutableStateOf("1") }
+    var loadShape by remember { mutableStateOf("Uniform") }
+    var loadDir by remember { mutableStateOf(LoadDir.GLOBAL_Z) }
+    val panelSpec = remember { PanelSpec() }
+    var pendingPanel by remember { mutableStateOf(listOf<Int>()) }
+    var selPanel by remember { mutableStateOf<Int?>(null) }
     var case by remember { mutableStateOf(LoadCase.DL) }
     var pending by remember { mutableStateOf<Int?>(null) }
     var selNode by remember { mutableStateOf<Int?>(null) }
@@ -150,7 +161,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
 
     fun onTap(t: TapInfo) {
         when (tool) {
-            Tool.SELECT -> { selNode = t.node; selMember = if (t.node == null) t.member else null }
+            Tool.SELECT -> { selNode = t.node; selMember = if (t.node == null) t.member else null; selPanel = if (t.node == null && t.member == null) t.panel else null }
             Tool.NODE -> t.planePoint?.let { p ->
                 val (m, id) = ModelEditor.addNode(model, p)
                 if (m !== model) commit(m, "Node N$id at (${fmt(p.x)}, ${fmt(p.y)}, ${fmt(p.z)})")
@@ -186,11 +197,45 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                 commit(ModelEditor.addNodalLoad(model, id, Vec3(d(fx), d(fy), d(fz)), case), "$case nodal load at N$id")
             }
             Tool.UDL -> t.member?.let { id ->
-                commit(ModelEditor.addMemberUdl(model, id, LoadDir.GLOBAL_Z, d(q), case), "$case UDL ${fmt(d(q))} kN/m on M$id")
+                val mem = model.members.first { it.id == id }
+                val len = (model.node(mem.j).pos - model.node(mem.i).pos).length
+                val load = when (loadShape) {
+                    "Partial" -> MemberLoad(id, loadDir, d(q), case, d(la).coerceIn(0.0, len), d(lb).coerceIn(0.0, len))
+                    "Trapezoid" -> MemberLoad(id, loadDir, d(q), case, d(la).coerceIn(0.0, len), d(lb, len).coerceIn(0.0, len), d(q2))
+                    else -> MemberLoad(id, loadDir, d(q), case)
+                }
+                if (load.a != null && load.b != null && load.b!! <= load.a!!) { message = "Load end b must be after start a (member length ${fmt(len)} m)"; return }
+                commit(model.copy(memberLoads = model.memberLoads + load), "$case $loadShape load on M$id")
             }
+            Tool.PANEL -> {
+                var m = model
+                val target = t.node ?: t.planePoint?.let { p -> ModelEditor.addNode(m, p).also { m = it.first }.second }
+                if (target == null) { message = "Tap a node or the grid."; return }
+                if (m !== model) commit(m)
+                if (target in pendingPanel) { message = "Node already picked"; return }
+                val list = pendingPanel + target
+                if (list.size < 4) { pendingPanel = list; message = "Panel corner ${list.size}/4: N$target" }
+                else {
+                    pendingPanel = emptyList()
+                    runCatching { ModelEditor.addPanel(m, list, panelSpec.proto()) }
+                        .onSuccess { (mm, pid) ->
+                            runCatching { com.structura.core.fem.Shell.frame(mm, mm.panels.last()).let { f -> com.structura.core.fem.Shell.area(f) } }
+                                .onSuccess { commit(mm, "Panel P$pid created (${fmt(it)} m²)") }
+                                .onFailure { e -> message = "Panel rejected: ${e.message}" }
+                        }
+                        .onFailure { message = it.message }
+                }
+            }
+            Tool.PANEL_MESH -> t.panel?.let { pid ->
+                val (nx, ny) = panelSpec.mesh()
+                runCatching { ModelEditor.meshPanel(model, pid, nx, ny) }
+                    .onSuccess { commit(it, "P$pid meshed into $nx × $ny panels") }
+                    .onFailure { message = it.message }
+            } ?: run { message = "Tap inside a panel." }
             Tool.DELETE -> when {
                 t.node != null -> commit(ModelEditor.deleteNode(model, t.node), "N${t.node} deleted")
                 t.member != null -> commit(ModelEditor.deleteMember(model, t.member), "M${t.member} deleted")
+                t.panel != null -> commit(ModelEditor.deletePanel(model, t.panel), "P${t.panel} deleted")
             }
         }
     }
@@ -294,6 +339,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                     ); camera.iso()
                 }, label = { Text("Portal") })
                 AssistChip(onClick = onWizard, label = { Text("Templates…") })
+                AssistChip(onClick = onStandards, label = { Text("🇮🇳 Indian Standards") })
                 AssistChip(onClick = { saveLauncher.launch("${model.title.replace(' ', '_')}.structura.json") }, label = { Text("↓ Save project") })
                 AssistChip(onClick = { openLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }, label = { Text("↑ Open project") })
                 AssistChip(onClick = {
@@ -338,6 +384,8 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                     workPlane = wp,
                     selectedMember = selMember,
                     pendingNode = pending,
+                    selectedPanel = selPanel,
+                    pendingNodes = pendingPanel,
                     buckling = buckling,
                     onTap = { onTap(it) },
                     modeShape = modal?.modes?.getOrNull(modeIdx)?.shape,
@@ -352,12 +400,13 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
 
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Tool.entries.forEach { t ->
-                    FilterChip(t == tool, { tool = t; pending = null; message = null }, { Text(t.label) })
+                    FilterChip(t == tool, { tool = t; pending = null; pendingPanel = emptyList(); message = null }, { Text(t.label) })
                 }
             }
 
             // context parameters
-            if (tool == Tool.NODE || tool == Tool.MEMBER) {
+            if (tool == Tool.PANEL || tool == Tool.PANEL_MESH) PanelPicker(panelSpec, showMesh = tool == Tool.PANEL_MESH)
+            if (tool == Tool.NODE || tool == Tool.MEMBER || tool == Tool.PANEL) {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("Work plane", style = MaterialTheme.typography.labelMedium)
                     Plane.entries.forEach { p -> FilterChip(p == plane, { plane = p }, { Text(p.label) }) }
@@ -378,7 +427,24 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                         Num("Fx (kN)", fx, Modifier.weight(1f)) { fx = it }
                         Num("Fy (kN)", fy, Modifier.weight(1f)) { fy = it }
                         Num("Fz (kN)", fz, Modifier.weight(1f)) { fz = it }
-                    } else Num("q along global Z (kN/m)", q, Modifier.weight(1f)) { q = it }
+                    } else {
+                        Num(if (loadShape == "Trapezoid") "q at a (kN/m)" else "q (kN/m)", q, Modifier.weight(1f)) { q = it }
+                        if (loadShape == "Trapezoid") Num("q at b (kN/m)", q2, Modifier.weight(1f)) { q2 = it }
+                        if (loadShape != "Uniform") {
+                            Num("a (m)", la, Modifier.weight(0.8f)) { la = it }
+                            Num("b (m)", lb, Modifier.weight(0.8f)) { lb = it }
+                        }
+                    }
+                }
+                if (tool == Tool.UDL) {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        listOf("Uniform", "Partial", "Trapezoid").forEach { sh -> FilterChip(sh == loadShape, { loadShape = sh }, { Text(sh) }) }
+                        Text("  Dir", style = MaterialTheme.typography.labelMedium)
+                        listOf(LoadDir.GLOBAL_Z to "Global Z", LoadDir.GLOBAL_X to "Global X", LoadDir.GLOBAL_Y to "Global Y", LoadDir.LOCAL_Z to "Local z")
+                            .forEach { (dd, lbl) -> FilterChip(dd == loadDir, { loadDir = dd }, { Text(lbl) }) }
+                    }
+                    Text("a, b measured from node i of the member. Trapezoid varies linearly from q at a to q at b (use 0 for a triangle).",
+                        style = MaterialTheme.typography.labelSmall)
                 }
             }
 
@@ -388,6 +454,9 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
             }
             selMember?.takeIf { tool == Tool.SELECT && model.members.any { m -> m.id == it } }?.let { id ->
                 MemberEditor(model, id, onApply = { m, msg -> commit(m, msg) }, onClose = { selMember = null })
+            }
+            selPanel?.takeIf { tool == Tool.SELECT && model.panels.any { p -> p.id == it } }?.let { id ->
+                PanelEditor(model, id, results, onApply = { m, msg -> commit(m, msg) }, onClose = { selPanel = null })
             }
 
             // analysis
@@ -450,7 +519,18 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
                     combos.forEachIndexed { k, c -> FilterChip(k == comboIdx, { selectCombo(k) }, { Text(c.name) }) }
                 }
             }
-            results?.let { r -> ResultsSummary(r, env, onDesignBeam) }
+            results?.let { r ->
+                if (r.panelResults.isNotEmpty()) {
+                    val pmax = r.panelResults.values.maxByOrNull { kotlin.math.abs(it.meanNormalDeflection) }!!
+                    val smax = r.panelResults.values.maxByOrNull { it.maxFaceStress }!!
+                    Text(
+                        "Panels: max mean normal deflection ${"%.3f".format(pmax.meanNormalDeflection * 1000)} mm (P${pmax.id}); " +
+                            "max face stress ${"%.3f".format(smax.maxFaceStress)} MPa (P${smax.id}). Tap a panel in Select mode for its results.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                if (r.model.members.isNotEmpty()) ResultsSummary(r, env, onDesignBeam)
+            }
             Text(
                 "${model.nodes.size} nodes · ${model.members.size} members · ${model.supports.size} supports · " +
                     "${model.nodalLoads.size + model.memberLoads.size + model.pointLoads.size} loads · undo ${pos}/${history.size - 1}",
@@ -505,6 +585,8 @@ private fun MemberEditor(model: FrameModel, id: Int, onApply: (FrameModel, Strin
     val spec = remember(id, m) { SectionSpec().also { it.from(m.section, m.material) } }
     var ki by remember(id, m) { mutableStateOf(m.springI?.let { fmt(it) } ?: "") }
     var kj by remember(id, m) { mutableStateOf(m.springJ?.let { fmt(it) } ?: "") }
+    var oi by remember(id, m) { mutableStateOf(fmt(m.offsetI)) }
+    var oj by remember(id, m) { mutableStateOf(fmt(m.offsetJ)) }
     val len = (model.node(m.j).pos - model.node(m.i).pos).length
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -521,6 +603,12 @@ private fun MemberEditor(model: FrameModel, id: Int, onApply: (FrameModel, Strin
                 Num("Spring j (kN·m/rad)", kj, Modifier.weight(1f)) { kj = it }
             }
             Text("Rotational springs make semi-rigid joints (blank = rigid). A hinge overrides the spring.", style = MaterialTheme.typography.labelSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Num("Rigid offset i (m)", oi, Modifier.weight(1f)) { oi = it }
+                Num("Rigid offset j (m)", oj, Modifier.weight(1f)) { oj = it }
+            }
+            Text("Rigid end offsets model joint zones (e.g. half the column depth). Loads on the offsets go straight to the node.",
+                style = MaterialTheme.typography.labelSmall)
             val loads = model.memberLoads.filter { it.member == id }
             val pts = model.pointLoads.filter { it.member == id }
             if (loads.isNotEmpty() || pts.isNotEmpty()) Text(
@@ -534,7 +622,10 @@ private fun MemberEditor(model: FrameModel, id: Int, onApply: (FrameModel, Strin
                     val mat = spec.material()
                     val si = ki.replace(',', '.').toDoubleOrNull()?.takeIf { it >= 0 }
                     val sj = kj.replace(',', '.').toDoubleOrNull()?.takeIf { it >= 0 }
-                    onApply(ModelEditor.updateMember(model, id) { it.copy(section = sec, material = mat, springI = si, springJ = sj) },
+                    val offI = oi.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+                    val offJ = oj.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+                    if (offI + offJ > 0.9 * len) return@OutlinedButton
+                    onApply(ModelEditor.updateMember(model, id) { it.copy(section = sec, material = mat, springI = si, springJ = sj, offsetI = offI, offsetJ = offJ) },
                         "M$id: ${sec.name}, ${mat.name}")
                 }) { Text("Apply") }
                 OutlinedButton(onClick = {
@@ -543,6 +634,43 @@ private fun MemberEditor(model: FrameModel, id: Int, onApply: (FrameModel, Strin
                     onApply(model.copy(members = model.members.map { it.copy(section = sec, material = mat) }), "All members: ${sec.name}, ${mat.name}")
                 }) { Text("Apply to all") }
                 if (loads.isNotEmpty() || pts.isNotEmpty()) OutlinedButton(onClick = { onApply(ModelEditor.clearLoadsOnMember(model, id), "Loads on M$id cleared") }) { Text("Clear loads") }
+                OutlinedButton(onClick = onClose) { Text("Close") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PanelEditor(model: FrameModel, id: Int, results: FrameResults?, onApply: (FrameModel, String) -> Unit, onClose: () -> Unit) {
+    val p = model.panels.first { it.id == id }
+    val spec = remember(id, p) { PanelSpec().also { it.from(p) } }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Panel P$id  ${p.nodes.joinToString("-") { "N$it" }} · ${p.name}, t = ${fmt(p.t * 1000)} mm", fontWeight = FontWeight.SemiBold)
+            PanelPicker(spec)
+            results?.panelResults?.get(id)?.let { r ->
+                Text(
+                    String.format(Locale.US, "Area %.3f m² · mean normal deflection %.3f mm · Nx %.2f, Ny %.2f, Nxy %.2f kN/m · " +
+                        "Mx %.3f, My %.3f, Mxy %.3f kN·m/m · max face stress %.3f MPa",
+                        r.area, r.meanNormalDeflection * 1000, r.nx, r.ny, r.nxy, r.mx, r.my, r.mxy, r.maxFaceStress),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(onClick = {
+                    val proto = spec.proto(id, p.nodes)
+                    onApply(ModelEditor.updatePanel(model, id) { proto }, "P$id updated")
+                }) { Text("Apply") }
+                OutlinedButton(onClick = {
+                    val (nx, ny) = spec.mesh()
+                    val proto = spec.proto(id, p.nodes)
+                    runCatching { ModelEditor.meshPanel(ModelEditor.updatePanel(model, id) { proto }, id, nx, ny) }
+                        .onSuccess { onApply(it, "P$id meshed $nx × $ny") }
+                }) { Text("Mesh ${spec.meshX}×${spec.meshY}") }
+                OutlinedButton(onClick = {
+                    val proto = spec.proto()
+                    onApply(model.copy(panels = model.panels.map { q -> proto.copy(id = q.id, nodes = q.nodes) }), "All panels updated")
+                }) { Text("Apply to all") }
                 OutlinedButton(onClick = onClose) { Text("Close") }
             }
         }

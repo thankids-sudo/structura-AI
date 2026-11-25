@@ -39,10 +39,18 @@ object ProjectJson {
                 .put("material", mats.indexOf(it.material)).put("section", secs.indexOf(it.section))
                 .put("beta", it.betaDeg).put("hingeI", it.hingeI).put("hingeJ", it.hingeJ)
                 .apply { it.springI?.let { k -> put("springI", k) }; it.springJ?.let { k -> put("springJ", k) } }
+                .put("offsetI", it.offsetI).put("offsetJ", it.offsetJ)
         }))
         o.put("supports", JSONArray(m.supports.map { JSONObject().put("node", it.node).put("restraints", JSONArray(it.restraints)) }))
         o.put("nodalLoads", JSONArray(m.nodalLoads.map { JSONObject().put("node", it.node).put("case", it.case).put("values", JSONArray(it.values)) }))
-        o.put("memberLoads", JSONArray(m.memberLoads.map { JSONObject().put("member", it.member).put("case", it.case).put("dir", it.dir.name).put("w", it.w) }))
+        o.put("memberLoads", JSONArray(m.memberLoads.map { l ->
+            JSONObject().put("member", l.member).put("case", l.case).put("dir", l.dir.name).put("w", l.w)
+                .apply { l.a?.let { put("a", it) }; l.b?.let { put("b", it) }; l.w2?.let { put("w2", it) } }
+        }))
+        o.put("panels", JSONArray(m.panels.map {
+            JSONObject().put("id", it.id).put("nodes", JSONArray(it.nodes)).put("t", it.t).put("E", it.e).put("G", it.g)
+                .put("nu", it.nu).put("gamma", it.gamma).put("pressure", it.pressure).put("case", it.case).put("name", it.name)
+        }))
         o.put("pointLoads", JSONArray(m.pointLoads.map {
             JSONObject().put("member", it.member).put("case", it.case).put("dir", it.dir.name).put("p", it.p).put("a", it.a)
         }))
@@ -68,11 +76,22 @@ object ProjectJson {
             members = arr("members") {
                 Member(it.getInt("id"), it.getInt("i"), it.getInt("j"), mats[it.getInt("material")], secs[it.getInt("section")],
                     it.optDouble("beta", 0.0), it.optBoolean("hingeI"), it.optBoolean("hingeJ"),
-                    if (it.has("springI")) it.getDouble("springI") else null, if (it.has("springJ")) it.getDouble("springJ") else null)
+                    if (it.has("springI")) it.getDouble("springI") else null, if (it.has("springJ")) it.getDouble("springJ") else null,
+                    it.optDouble("offsetI", 0.0), it.optDouble("offsetJ", 0.0))
             },
             supports = arr("supports") { s -> val r = s.getJSONArray("restraints"); Support(s.getInt("node"), (0 until 6).map { r.getBoolean(it) }) },
             nodalLoads = arr("nodalLoads") { NodalLoad(it.getInt("node"), dbl(it.getJSONArray("values")), it.optString("case", "DL")) },
-            memberLoads = arr("memberLoads") { MemberLoad(it.getInt("member"), LoadDir.valueOf(it.getString("dir")), it.getDouble("w"), it.optString("case", "DL")) },
+            memberLoads = arr("memberLoads") {
+                MemberLoad(it.getInt("member"), LoadDir.valueOf(it.getString("dir")), it.getDouble("w"), it.optString("case", "DL"),
+                    if (it.has("a")) it.getDouble("a") else null, if (it.has("b")) it.getDouble("b") else null,
+                    if (it.has("w2")) it.getDouble("w2") else null)
+            },
+            panels = arr("panels") { p ->
+                val ns = p.getJSONArray("nodes")
+                com.structura.core.fem.Panel(p.getInt("id"), (0 until ns.length()).map { ns.getInt(it) }, p.getDouble("t"), p.getDouble("E"),
+                    p.getDouble("G"), p.getDouble("nu"), p.getDouble("gamma"), p.optDouble("pressure", 0.0), p.optString("case", "LL"),
+                    p.optString("name", "Panel"))
+            },
             selfWeight = o.optBoolean("selfWeight", true),
             beamTheory = runCatching { com.structura.core.fem.BeamTheory.valueOf(o.optString("beamTheory", "EULER")) }.getOrDefault(com.structura.core.fem.BeamTheory.EULER),
             title = o.optString("title", "Project"),

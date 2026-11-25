@@ -103,6 +103,18 @@ Same workflow as the Structura AI web version:
 - **Semi-rigid joints:** rotational springs (kN·m/rad) at member ends, by 16-DOF static condensation; a hinge is a spring of 0. Verified: k = 2EI/L gives an end moment of wL²/24.
 - **Modal analysis:** consistent mass matrices and subspace iteration. Output: frequencies, periods, mass participation X/Y/Z with cumulative %, and animated mode shapes. Mass = self-weight + DL + 0.25 or 0.5 LL (IS 1893 Table 10). Verified against the cantilever (1.875²) and simply supported (π²) beam frequencies.
 
+### Batch B additions
+- **Member loads:** uniform, partial (a → b) and trapezoidal or triangular, in global X/Y/Z or local z. Fixed-end forces come from exact Gauss integration of the point-load solution; internal forces are exact by statics. Verified: triangular load gives wL/6, wL/3 and wL²/(9√3); partial UDL reactions; deflection matches a subdivided model.
+- **Rigid end offsets** at i and j (joint zones), using a rigid-arm transformation. Loads on the arms go straight to the node. Verified: cantilever with an offset gives δ = P·Lf³/3EI. Buckling and modal analyses use the full member length.
+- **Q4 flat-shell panels** (slabs, walls, FRP plates): membrane + Reissner–Mindlin plate, with 1-point transverse shear plus t²/h²-scaled stabilisation, 6 DOF/node, normal pressure and self-weight. Results: mean normal deflection, N, M and max face stress at the centroid.
+  - **Panel tool:** tap 4 corners.
+  - **Panel mesh:** splits a panel into nx × ny and splits beams along its edges so they stay connected.
+  - Verified against Timoshenko's square plate: simply supported 0.00406 qa⁴/D and clamped 0.00126 qa⁴/D, within 4 % on an 8 × 8 mesh.
+- **Indian Standards · Load assumptions** screen:
+  - Floor area load calculator (DL, LL by occupancy, factored load, seismic weight).
+  - Slab → beam load transfer (one-way / two-way equivalent UDL).
+  - Quick reference for IS 875 Parts 1/2/3/5, IS 456 Table 16/18, IS 1893 and IS 800.
+
 ## Detail drawing (UCS-based, DXF)
 
 - Every view has its own **named UCS**: `ELEVATION` (origin at the soffit, outer face of the left support), `SECTION_A-A` (origin at the bottom-left corner of the section), and `NOTES`.

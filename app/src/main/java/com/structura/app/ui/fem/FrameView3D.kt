@@ -137,7 +137,7 @@ enum class Plane(val label: String) { XY("XY (plan)"), XZ("XZ (front)"), YZ("YZ 
 data class WorkPlane(val plane: Plane = Plane.XY, val offset: Double = 0.0, val snap: Double = 1.0, val visible: Boolean = true)
 
 /** What a tap hit: nearest node / member within reach, and the snapped point on the work plane. */
-data class TapInfo(val node: Int?, val member: Int?, val planePoint: Vec3?)
+data class TapInfo(val node: Int?, val member: Int?, val planePoint: Vec3?, val panel: Int? = null)
 
 /** Orbit camera, hoistable so screens can set Top / Front / Right presets. */
 class Camera(yaw: Float = -35f, pitch: Float = 25f) {
@@ -208,6 +208,8 @@ fun FrameView3D(
     onTap: ((TapInfo) -> Unit)? = null,
     modeShape: Map<Int, List<Pair<Vec3, Vec3>>>? = null,
     modeLabel: String = "",
+    selectedPanel: Int? = null,
+    pendingNodes: List<Int> = emptyList(),
 ) {
     var canvasSize by remember { mutableStateOf(Size(1f, 1f)) }
     val tapCallback by rememberUpdatedState(onNodeTap)
@@ -256,12 +258,15 @@ fun FrameView3D(
                     val memberHit = if (nodeHit != null) null else m.members.map { mem ->
                         mem.id to segmentDistance(tap, pj.screen(m.node(mem.i).pos), pj.screen(m.node(mem.j).pos))
                     }.filter { it.second < 30f }.minByOrNull { it.second }?.first
+                    val panelHit = if (nodeHit != null || memberHit != null) null else m.panels.firstOrNull { p ->
+                        pointInPolygon(tap, p.nodes.map { pj.screen(m.node(it).pos) })
+                    }?.id
                     val pp = wp?.let { w ->
                         pj.onPlane(tap, w.plane, w.offset)?.let { p ->
                             Vec3(snap(p.x, w.snap), snap(p.y, w.snap), snap(p.z, w.snap))
                         }
                     }
-                    info(TapInfo(nodeHit, memberHit, pp))
+                    info(TapInfo(nodeHit, memberHit, pp, panelHit))
                 }
             },
     ) {
@@ -272,6 +277,21 @@ fun FrameView3D(
             axesTriad(pj)
 
             val faded = view != ResultView.MODEL
+            for (p in model.panels) {
+                val poly = p.nodes.map { pj.screen(model.node(it).pos) }
+                val path = Path().apply { moveTo(poly[0].x, poly[0].y); for (q in 1 until 4) lineTo(poly[q].x, poly[q].y); close() }
+                val sel = p.id == selectedPanel
+                drawPath(path, if (sel) Color(0x55FFA000) else Color(0x332196F3))
+                drawPath(path, if (sel) Color(0xFFFFA000) else Color(0xFF90A4AE), style = Stroke(if (sel) 3f else 1.2f))
+                if (p.pressure != 0.0 && view == ResultView.MODEL) {
+                    val c = p.nodes.map { model.node(it).pos }.reduce { a, b -> a + b } * 0.25
+                    val nrm = ((model.node(p.nodes[2]).pos - model.node(p.nodes[0]).pos) cross (model.node(p.nodes[3]).pos - model.node(p.nodes[1]).pos)).unit()
+                    val dir = pj.pixelDir(nrm * (if (p.pressure > 0) 1.0 else -1.0))
+                    val dl = dir.getDistance().coerceAtLeast(1e-3f)
+                    val tip = pj.screen(c)
+                    drawArrow(tip - Offset(dir.x / dl, dir.y / dl) * 34f, tip, loadColor.copy(alpha = 0.8f), 2f)
+                }
+            }
             for (m in model.members) {
                 val sel = m.id == selectedMember
                 drawLine(
@@ -289,7 +309,7 @@ fun FrameView3D(
             supports(pj, model)
             for (n in model.nodes) {
                 val p = pj.screen(n.pos)
-                if (n.id == selectedNode || n.id == pendingNode) drawCircle(Color(0xFFFFA000), 16f, p, style = Stroke(4f))
+                if (n.id == selectedNode || n.id == pendingNode || n.id in pendingNodes) drawCircle(Color(0xFFFFA000), 16f, p, style = Stroke(4f))
                 drawCircle(ink, 4.5f, p)
             }
             loads(pj, model, loadColor)
@@ -323,6 +343,14 @@ fun FrameView3D(
                     val k = if (deformScale > 0) deformScale else if (maxD > 1e-12) 0.08 * modelSize / maxD else 1.0
                     val kk = k * phase
                     val colourMax = maxD.coerceAtLeast(1e-12)
+                    for (p in model.panels) {
+                        val disp = p.nodes.map { id -> results.nodeDisplacements[id]!!.let { d -> Vec3(d[0], d[1], d[2]) } }
+                        val poly = p.nodes.mapIndexed { q, id -> pj.screen(model.node(id).pos + disp[q] * kk) }
+                        val mean = disp.sumOf { it.length } / 4
+                        val path = Path().apply { moveTo(poly[0].x, poly[0].y); for (q in 1 until 4) lineTo(poly[q].x, poly[q].y); close() }
+                        drawPath(path, heat((mean / colourMax).toFloat()).copy(alpha = 0.55f))
+                        drawPath(path, Color(0x66000000), style = Stroke(1f))
+                    }
                     for (m in model.members) {
                         val real = results.deformedShape(m.id, 1.0, 16)
                         val zero = results.deformedShape(m.id, 0.0, 16)
@@ -364,6 +392,17 @@ fun FrameView3D(
             }
         }
     }
+}
+
+private fun pointInPolygon(p: Offset, poly: List<Offset>): Boolean {
+    var inside = false
+    var j = poly.size - 1
+    for (i in poly.indices) {
+        val a = poly[i]; val b = poly[j]
+        if ((a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y + 1e-9f) + a.x) inside = !inside
+        j = i
+    }
+    return inside
 }
 
 private fun snap(v: Double, s: Double) = if (s > 0) Math.round(v / s) * s else v
@@ -436,15 +475,21 @@ private fun DrawScope.loads(pj: Projector, model: FrameModel, c: Color) {
         drawArrow(tail, tip, c, 3f)
         drawIntoCanvas { it.nativeCanvas.drawText("%.0f kN".format(f.length), tail.x + 4, tail.y - 4, paint) }
     }
+    val maxQ = model.memberLoads.maxOfOrNull { maxOf(kotlin.math.abs(it.w), kotlin.math.abs(it.w2 ?: it.w)) } ?: 0.0
     for (ml in model.memberLoads) {
-        if (ml.dir != LoadDir.GLOBAL_Z || ml.w == 0.0) continue
+        if (ml.dir != LoadDir.GLOBAL_Z || maxQ == 0.0) continue
         val m = model.members.firstOrNull { it.id == ml.member } ?: continue
         val a = model.node(m.i).pos
         val b = model.node(m.j).pos
-        val down = if (ml.w < 0) 1f else -1f
-        for (k in 1..5) {
-            val p = pj.screen(a + (b - a) * (k / 6.0))
-            drawArrow(Offset(p.x, p.y - 26f * down), p, c.copy(alpha = 0.7f), 1.6f)
+        val len = (b - a).length
+        val s0 = (ml.a ?: 0.0).coerceIn(0.0, len); val s1 = (ml.b ?: len).coerceIn(s0, len)
+        for (k in 0..5) {
+            val s = s0 + (s1 - s0) * (k + 0.5) / 6
+            val q = ml.w + ((ml.w2 ?: ml.w) - ml.w) * (k + 0.5) / 6
+            if (kotlin.math.abs(q) < 1e-9) continue
+            val p = pj.screen(a + (b - a) * (s / len))
+            val h = (10f + 26f * (kotlin.math.abs(q) / maxQ).toFloat()) * (if (q < 0) 1f else -1f)
+            drawArrow(Offset(p.x, p.y - h), p, c.copy(alpha = 0.7f), 1.6f)
         }
     }
 }

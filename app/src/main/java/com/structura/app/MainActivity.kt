@@ -10,6 +10,7 @@ import androidx.navigation.compose.rememberNavController
 import com.structura.app.ui.drawing.DrawingScreen
 import com.structura.app.ui.fem.FemScreen
 import com.structura.app.ui.home.HomeScreen
+import com.structura.app.ui.standards.StandardsScreen
 import com.structura.app.ui.studio.StudioScreen
 import com.structura.app.ui.rcc.BeamDesignScreen
 import com.structura.app.ui.theme.StructuraTheme
@@ -20,6 +21,7 @@ object Routes {
     const val RCC_DRAWING = "rcc/drawing"
     const val FEM = "fem/frame"
     const val STUDIO = "fem/studio"
+    const val STANDARDS = "standards"
 }
 
 class MainActivity : ComponentActivity() {
@@ -49,10 +51,14 @@ class MainActivity : ComponentActivity() {
                             onStudio = { nav.navigate(Routes.STUDIO) { popUpTo(Routes.HOME) } },
                         )
                     }
+                    composable(Routes.STANDARDS) {
+                        StandardsScreen(onBack = { nav.popBackStack() })
+                    }
                     composable(Routes.STUDIO) {
                         StudioScreen(
                             onBack = { nav.popBackStack() },
                             onWizard = { nav.navigate(Routes.FEM) },
+                            onStandards = { nav.navigate(Routes.STANDARDS) },
                             onDesignBeam = { nav.navigate(Routes.RCC_BEAM) },
                         )
                     }
