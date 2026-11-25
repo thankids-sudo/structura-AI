@@ -64,7 +64,7 @@ class RemainingGapsTest {
         val combos = LoadCombination.seismic100_30()
         assertEquals(25, combos.size)
         assertEquals(combos.map { it.name }.toSet().size, 25)
-        assertTrue(combos.any { it.factor(LoadCase.EX) == 1.5 && it.factor(LoadCase.EY) == -0.45 })
+        assertTrue(combos.any { abs(it.factor(LoadCase.EX) - 1.5) < 1e-12 && abs(it.factor(LoadCase.EY) + 0.45) < 1e-12 })
         val ey = LateralLoads.seismicStatic(m, p, 1, case = LoadCase.EY, eccentricity = 0.05)
         val model = m.copy(nodalLoads = m.nodalLoads + ecc.loads + ey.loads)
         assertEquals(25, LoadCombination.forModel(model.loadCases).size)

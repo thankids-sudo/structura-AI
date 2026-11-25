@@ -40,7 +40,7 @@ import com.structura.core.steel.SteelResult
 import com.structura.core.steel.SteelSection
 import java.util.Locale
 
-enum class SteelTask(val label: String) { BEAM("Beam"), COLUMN("Column"), TENSION("Tension"), BEAM_COLUMN("Beam-column"), BOLTS("Bolts"), WELDS("Fillet weld") }
+enum class SteelTask(val label: String) { BEAM("Beam"), COLUMN("Column"), TENSION("Tension"), BEAM_COLUMN("Beam-column"), BOLTS("Bolts"), WELDS("Fillet weld"), ANGLE("Single angle") }
 
 private val FAMILIES: List<String> get() = com.structura.core.steel.SteelLibrary.prefixes() + "Custom I"
 
@@ -85,6 +85,14 @@ fun SteelScreen(onBack: () -> Unit) {
     var shop by rememberSaveable { mutableStateOf(true) }
 
     var out by remember { mutableStateOf<Pair<String, SteelResult>?>(null) }
+    var angB by rememberSaveable { mutableStateOf("65") }
+    var angD by rememberSaveable { mutableStateOf("65") }
+    var angT by rememberSaveable { mutableStateOf("6") }
+    var angL by rememberSaveable { mutableStateOf("1500") }
+    var angTen by rememberSaveable { mutableStateOf("0") }
+    var angComp by rememberSaveable { mutableStateOf("60") }
+    var angBolts by rememberSaveable { mutableStateOf("2") }
+    var angFixed by rememberSaveable { mutableStateOf(true) }
     var libVersion by remember { mutableStateOf(0) }
     var err by remember { mutableStateOf<String?>(null) }
 
@@ -101,7 +109,7 @@ fun SteelScreen(onBack: () -> Unit) {
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 SteelGrade.all.forEach { g -> FilterChip(g == grade, { grade = g }, { Text(g.name) }) }
             }
-            if (task != SteelTask.BOLTS && task != SteelTask.WELDS) {
+            if (task != SteelTask.BOLTS && task != SteelTask.WELDS && task != SteelTask.ANGLE) {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     FAMILIES.forEach { f -> FilterChip(f == family, {
                         family = f
@@ -170,6 +178,23 @@ fun SteelScreen(onBack: () -> Unit) {
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) { Switch(bolt88, { bolt88 = it }); Text(if (bolt88) "  Grade 8.8" else "  Grade 4.6") }
                 }
+                SteelTask.ANGLE -> {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Field("Connected leg b", angB, Modifier.weight(1f)) { angB = it }; Field("Outstand d", angD, Modifier.weight(1f)) { angD = it }
+                        Field("t (mm)", angT, Modifier.weight(1f)) { angT = it }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Field("L c/c (mm)", angL, Modifier.weight(1f)) { angL = it }; Field("Bolts (0 = weld)", angBolts, Modifier.weight(1f)) { angBolts = it }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Field("Tension T (kN)", angTen, Modifier.weight(1f)) { angTen = it }; Field("Compression P (kN)", angComp, Modifier.weight(1f)) { angComp = it }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(angFixed, { angFixed = it }); Text(if (angFixed) "  Gussets fixed (Table 12)" else "  Gussets hinged (Table 12)")
+                    }
+                    Text("Connected through leg b; hole Ø as in Tension task (default 18 mm). Block shear (Cl. 6.4) to be checked separately.",
+                        style = MaterialTheme.typography.labelSmall)
+                }
                 SteelTask.WELDS -> {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Field("Weld size s (mm)", weld, Modifier.weight(1f)) { weld = it }; Field("Force (kN)", force, Modifier.weight(1f)) { force = it }
@@ -192,6 +217,9 @@ fun SteelScreen(onBack: () -> Unit) {
                             val b = if (bolt88) IS800.Bolt.g88(n(boltDia, 20.0)) else IS800.Bolt.g46(n(boltDia, 20.0))
                             "Bolt value (kN)" to IS800.boltGroup(b, grade.fu, n(plateT, 10.0), n(force), n(edge, 40.0), n(pitch, 60.0), n(planes, 1.0).toInt())
                         }
+                        SteelTask.ANGLE -> "Capacity (kN)" to com.structura.core.steel.AngleDesign.check(n(angB, 65.0), n(angD, 65.0), n(angT, 6.0), grade,
+                            n(angTen), n(angComp), n(angL, 1500.0), n(angBolts, 2.0).toInt(), n(holeDia, 18.0), angFixed,
+                            "ISA ${n(angD, 65.0).toInt()}×${n(angB, 65.0).toInt()}×${n(angT, 6.0).toInt()}")
                         SteelTask.WELDS -> "Weld length (mm)" to IS800.filletWeld(n(weld, 6.0), n(force), grade.fu, n(plateT, 10.0), n(thick, 12.0), shop)
                     }
                 }.onSuccess { out = it }.onFailure { err = it.message; out = null }
