@@ -28,6 +28,9 @@ object Routes {
     const val STANDARDS = "standards"
     const val PLAN = "plan"
     const val LOADS = "loads"
+    const val PROJECTS = "projects"
+    const val DESIGN = "design/{id}"
+    fun design(id: String) = "design/$id"
 }
 
 class MainActivity : ComponentActivity() {
@@ -39,9 +42,20 @@ class MainActivity : ComponentActivity() {
         setContent {
             StructuraTheme {
                 val nav = rememberNavController()
-                NavHost(navController = nav, startDestination = Routes.HOME) {
+                NavHost(navController = nav, startDestination = Routes.PROJECTS) {
+                    composable(Routes.PROJECTS) {
+                        com.structura.app.project.ProjectsScreen(onOpened = {
+                            nav.navigate(Routes.HOME) { popUpTo(Routes.PROJECTS) { inclusive = true }; launchSingleTop = true }
+                        })
+                    }
+                    composable(Routes.DESIGN) { entry ->
+                        com.structura.app.ui.design.DesignModuleScreen(entry.arguments?.getString("id") ?: "roof_truss",
+                            onBack = { nav.popBackStack() }, onStudio = { nav.navigate(Routes.STUDIO) })
+                    }
                     composable(Routes.HOME) {
-                        com.structura.app.ui.home.WorkbenchHome(onOpen = { route -> nav.navigate(route) })
+                        com.structura.app.ui.home.WorkbenchHome(onOpen = { route ->
+                            if (route == Routes.PROJECTS) nav.navigate(Routes.PROJECTS) { popUpTo(Routes.HOME) { inclusive = true } } else nav.navigate(route)
+                        })
                     }
                     composable(Routes.RCC_BEAM) {
                         BeamDesignScreen(

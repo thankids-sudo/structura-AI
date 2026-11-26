@@ -97,8 +97,11 @@ fun ProjectsScreen(onOpened: () -> Unit) {
             }
         }
 
-        ProjectStore.current?.let { cur ->
-            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Cyan).clickable(role = Role.Button) { onOpened() }.padding(16.dp)) {
+        val lastId = remember { ProjectStore.lastId(context) }
+        (ProjectStore.current ?: projects.firstOrNull { it.id == lastId })?.let { cur ->
+            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Cyan).clickable(role = Role.Button) {
+                if (ProjectStore.current?.id == cur.id || ProjectStore.open(context, cur.id)) onOpened()
+            }.padding(16.dp)) {
                 Text("Continue  ·  ${cur.name}", color = Dark, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
             }
         }

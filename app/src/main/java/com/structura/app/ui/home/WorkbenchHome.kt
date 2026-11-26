@@ -85,6 +85,8 @@ private enum class Phase(val no: String, val label: String, val title: String, v
     FEM("03", "FEM", "FEM + AI", "3D frames · shells · modal · IS 1893"),
     PLAN("04", "Plan", "Drawing → Structure", "DXF · PDF · photo → model · BOQ"),
     STAAD("05", "STAAD", "STAAD tools", "CEE 330L workflow"),
+    ROOF("06", "Roof", "Roof structures", "IS 800 · IS 801 · IS 875"),
+    WALL("07", "Walls", "Walls", "IS 456 · IS 1905"),
 }
 
 private class Tool(val label: String, val note: String, val route: String, val panel: Int = 0)
@@ -112,6 +114,16 @@ private fun tools(p: Phase): List<Tool> = when (p) {
     Phase.PLAN -> listOf(
         Tool("Drawing → Structure", "DXF / PDF / photo plan → grid, columns, beams", Routes.PLAN),
         Tool("Take-down, sizes, BOQ", "Excel · EstimateX JSON", Routes.PLAN),
+    )
+    Phase.ROOF -> listOf(
+        Tool("Roof truss", "Fink · Pratt · Howe · Fan — loads, analysis, angles, purlins", Routes.design("roof_truss")),
+        Tool("Self-supported corrugated roof", "custom profile · arch · buckling", Routes.design("arch_roof")),
+    )
+    Phase.WALL -> listOf(
+        Tool("Retaining wall", "cantilever RCC · stability · stem / heel / toe", Routes.design("retaining_wall")),
+        Tool("Load-bearing masonry wall", "IS 1905 slenderness, stress", Routes.design("wall_masonry")),
+        Tool("RCC wall", "IS 456 Cl. 32", Routes.design("wall_rcc")),
+        Tool("Compound wall", "wind, overturning, footing", Routes.design("wall_compound")),
     )
     Phase.STAAD -> listOf(
         Tool("Benchmarks and truss wizards", "B1–B4 · Fink · Pratt", Routes.STUDIO, 1),
@@ -175,11 +187,10 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
         scope.launch {
             try {
                 val res = ensureResults()
-                val html = withContext(Dispatchers.Default) {
-                    val env = FemReport.envelope(res.map { it.second })
-                    HtmlReport.build(model, res.first(), env, res.map { it.first }, steel = SteelModelCheck.check(model, res))
+                val doc = withContext(Dispatchers.Default) {
+                    com.structura.core.fem.FemReportDoc.build(model, res, SteelModelCheck.check(model, res), review ?: ResultCheck.review(model, res))
                 }
-                shareTextFile(context, "StructuraAI_report.html", "text/html", html, "Structura AI — ${model.title}")
+                com.structura.app.report.PdfExport.share(context, doc)
             } catch (e: Exception) { status = "Report: ${e.message}" } finally { busy = false }
         }
     }
@@ -189,8 +200,8 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
         Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Image(painterResource(com.structura.app.R.drawable.structura_logo), "Structura AI logo", Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)))
             Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(model.title, color = Ink, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1)
+            Column(Modifier.weight(1f).clickable(role = Role.Button, onClickLabel = "Projects") { onOpen(Routes.PROJECTS) }) {
+                Text((com.structura.app.project.ProjectStore.current?.name ?: model.title) + "  ▾", color = Ink, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1)
                 Text("${model.members.size} members · ${model.nodes.size} nodes · ${model.supports.size} supports", color = Muted, fontSize = 11.sp)
             }
             Pill(if (Units.imperial) "ft · kip" else "m · kN", false) { Units.set(context, !Units.imperial) }
@@ -210,6 +221,8 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
                 Text("DESIGN", color = Muted, fontSize = 10.sp)
                 RailButton(Phase.RCC, sheet == Phase.RCC) { sheet = Phase.RCC }
                 RailButton(Phase.STEEL, sheet == Phase.STEEL) { sheet = Phase.STEEL }
+                RailButton(Phase.ROOF, sheet == Phase.ROOF) { sheet = Phase.ROOF }
+                RailButton(Phase.WALL, sheet == Phase.WALL) { sheet = Phase.WALL }
             }
             Column(Modifier.align(Alignment.CenterEnd).padding(end = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("MODEL", color = Muted, fontSize = 10.sp)
@@ -343,6 +356,8 @@ private fun PhaseIcon(p: Phase, c: Color) = Canvas(Modifier.size(22.dp)) {
             l(5f, 8f, 5f, 16f); l(19f, 8f, 19f, 16f); l(7f, 6f, 17f, 6f); l(7f, 7f, 17f, 17f) }
         Phase.PLAN -> { drawRect(c, androidx.compose.ui.geometry.Offset(3 * s, 3 * s), androidx.compose.ui.geometry.Size(18 * s, 18 * s), style = st)
             l(9f, 3f, 9f, 21f); l(15f, 3f, 15f, 21f); l(3f, 9f, 21f, 9f); l(3f, 15f, 21f, 15f) }
+        Phase.ROOF -> { l(2f, 14f, 12f, 4f); l(12f, 4f, 22f, 14f); l(5f, 11f, 5f, 20f); l(19f, 11f, 19f, 20f); l(5f, 20f, 19f, 20f) }
+        Phase.WALL -> { l(4f, 4f, 4f, 20f); l(10f, 4f, 10f, 14f); l(10f, 14f, 20f, 14f); l(20f, 14f, 20f, 20f); l(4f, 20f, 20f, 20f); l(4f, 4f, 10f, 4f) }
         Phase.STAAD -> { l(2f, 18f, 22f, 18f); l(2f, 18f, 7f, 10f); l(7f, 10f, 17f, 10f); l(17f, 10f, 22f, 18f); l(7f, 10f, 10f, 18f); l(17f, 10f, 14f, 18f); l(12f, 10f, 12f, 18f) }
     }
 }
