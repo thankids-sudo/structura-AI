@@ -57,7 +57,8 @@ object CounterfortWall {
         val hs = h - d
         fun cfW(b: Double, toe: Double): Pair<Double, Double> {
             val heel = b - toe - inp.stem
-            return 25 * inp.counterfort * 0.5 * heel * hs / inp.spacing to toe + inp.stem + heel / 3
+            // concrete counterfort replaces soil already counted over the full heel: net (25 − γ)
+            return (25 - inp.gammaSoil) * inp.counterfort * 0.5 * heel * hs / inp.spacing to toe + inp.stem + heel / 3
         }
         fun toeOf(b: Double) = if (inp.toe > 0) inp.toe else floor(b / 4 / 0.05) * 0.05
         fun st(b: Double): RetainingWall.Stability { val (w, x) = cfW(b, toeOf(b)); return RetainingWall.stability(ri, b, toeOf(b), d, inp.stem, w, x) }
@@ -69,7 +70,7 @@ object CounterfortWall {
         val ka = RetainingWall.ka(inp.phi)
         val l = inp.spacing
         val checks = ArrayList<DesignCheck>(); val steps = ArrayList<String>()
-        steps += "Ka = ${f3(ka)}; Pa = ${f2(s.pa)}, Ps = ${f2(s.ps)} kN/m; counterforts ${f0(inp.counterfort * 1000)} mm thick at ${f2(l)} m c/c (weight ${f2(cfW(b, toeOf(b)).first)} kN/m run)"
+        steps += "Ka = ${f3(ka)}; Pa = ${f2(s.pa)}, Ps = ${f2(s.ps)} kN/m; counterforts ${f0(inp.counterfort * 1000)} mm thick at ${f2(l)} m c/c (net of displaced fill ${f2(cfW(b, toeOf(b)).first)} kN/m run)"
         steps += "B = ${f2(s.b)} m (${if (inp.baseWidth <= 0) "auto" else "given"}), toe ${f2(s.t)} m, stem ${f0(inp.stem * 1000)} mm, heel ${f2(s.heel)} m, base ${f0(d * 1000)} mm"
         val otL = 0.9 * s.mr; val otR = 1.2 * s.moE + 1.4 * s.moS
         checks += DesignCheck("Overturning", "0.9·Mr = ${f1(otL)}", "≥ ${f1(otR)} kN·m/m", if (otL >= otR) Status.PASS else Status.FAIL, IS456.ref("Cl. 20.1"))

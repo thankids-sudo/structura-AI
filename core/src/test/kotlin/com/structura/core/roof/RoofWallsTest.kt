@@ -103,6 +103,18 @@ class RoofWallsTest {
     }
 
     @Test
+    fun truss_gussetChecks_andWelded() {
+        val b = RoofTruss.design(RoofTruss.Input(type = RoofTruss.Type.HOWE, span = 12.0, rise = 3.0))
+        assertEquals(b.model.members.size, b.detail.gusset.size)
+        assertTrue(b.detail.gusset.all { it.tdg > 0 && (it.tdb ?: 0.0) > 0 })
+        assertTrue(b.detail.checks.any { it.item == "Gusset block shear" })
+        val w = RoofTruss.design(RoofTruss.Input(type = RoofTruss.Type.HOWE, span = 12.0, rise = 3.0, welded = true, doubleAngles = true))
+        assertTrue(w.detail.welded && w.detail.welds.size == w.model.members.size)
+        assertTrue(w.detail.welds.all { it.heel >= it.toe && it.heel >= 6 * it.size })
+        println("welded worst ${w.detail.welds.maxOf { it.utilisation }} safe=${w.report.isSafe}; bolted gusset η ${b.detail.gusset.maxOf { it.utilisation }}")
+    }
+
+    @Test
     fun counterfortWall_stable() {
         val r = CounterfortWall.design(CounterfortWall.Input(height = 8.0))
         r.checks.forEach { assertEquals(it.item, Status.PASS, it.status) }

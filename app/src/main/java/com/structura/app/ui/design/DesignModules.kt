@@ -32,7 +32,7 @@ object DesignModules {
                 vb = v.d("vb", 44.0), terrain = v.d("terrain", 2.0).toInt(), eavesHeight = v.d("eaves", 6.0),
                 cpeWindward = v.d("cpew", -0.8), cpeLeeward = v.d("cpel", -0.4), cpi = v.d("cpi", 0.2),
                 grade = if (v["grade"] == "E350") SteelGrade.E350 else SteelGrade.E250, bolts = v.d("bolts", 2.0).toInt(),
-                doubleAngles = v["members"] == "Double angle", gusset = v.d("gusset", 8.0), boltDia = v.d("boltDia", 16.0),
+                doubleAngles = v["members"] == "Double angle", gusset = v.d("gusset", 8.0), boltDia = v.d("boltDia", 16.0), welded = v["conn"] == "Welded", weldSize = v.d("weld", 0.0),
             ))
 
     val all: List<DesignModule> = listOf(
@@ -49,6 +49,7 @@ object DesignModules {
             FieldSpec("grade", "Steel", "E250", listOf("E250", "E350"), "Steel"), FieldSpec("bolts", "Bolts per end", "2", group = "Steel"),
             FieldSpec("members", "Members", "Single angle", listOf("Single angle", "Double angle"), "Connections"),
             FieldSpec("gusset", "Gusset thickness (mm)", "8", group = "Connections"), FieldSpec("boltDia", "Bolt φ (mm)", "16", listOf("12", "16", "20", "24"), "Connections"),
+            FieldSpec("conn", "Connection", "Bolted", listOf("Bolted", "Welded"), "Connections"), FieldSpec("weld", "Fillet weld size (blank = auto)", "", group = "Connections"),
         ), dxf = { v -> DxfWriter.write(truss(v).detail.drawing) }) { v ->
             val r = truss(v)
             r.report to r.model

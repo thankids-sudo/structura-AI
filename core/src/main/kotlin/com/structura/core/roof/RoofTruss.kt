@@ -57,6 +57,8 @@ object RoofTruss {
         val doubleAngles: Boolean = false,      // two angles back to back on the gusset
         val gusset: Double = 8.0,               // mm
         val boltDia: Double = 16.0,             // mm, grade 4.6
+        val welded: Boolean = false,            // fillet-welded to the gussets instead of bolted
+        val weldSize: Double = 0.0,             // mm; 0 = auto
     )
 
     class Group(val name: String, val members: List<Int>, val length: Double, val tension: Double, val compression: Double,
@@ -272,7 +274,7 @@ object RoofTruss {
             val a = angles[chosen[gName] ?: 0]
             m.id to TrussDetail.MemberSpec(a.first, a.second, a.third)
         }
-        val detail = TrussDetail.detail(model, specs, forces, inp.doubleAngles, inp.gusset, inp.boltDia, inp.grade)
+        val detail = TrussDetail.detail(model, specs, forces, inp.doubleAngles, inp.gusset, inp.boltDia, inp.grade, inp.welded, inp.weldSize)
 
         // report
         val ref = FrameSolver.analyseAll(model, combos)
@@ -282,7 +284,7 @@ object RoofTruss {
             "Truss type" to inp.type.label, "Span × rise" to "${f2(inp.span)} m × ${f2(inp.rise)} m (θ = ${f1(thDeg)}°)",
             "Truss spacing" to "${f2(inp.spacing)} m", "Purlin spacing" to "${f2(inp.purlinSpacing)} m on slope",
             "Sheeting / services" to "${f2(inp.sheeting)} kN/m² on slope / ${f2(inp.services)} kN/m² on plan",
-            "Steel" to "${inp.grade.name}, fy ${f0(inp.grade.fy)} MPa, fu ${f0(inp.grade.fu)} MPa; ${if (inp.doubleAngles) "double angles back to back" else "single angles"} on ${f0(inp.gusset)} mm gussets, M${f0(inp.boltDia)} bolts",
+            "Steel" to "${inp.grade.name}, fy ${f0(inp.grade.fy)} MPa, fu ${f0(inp.grade.fu)} MPa; ${if (inp.doubleAngles) "double angles back to back" else "single angles"} on ${f0(inp.gusset)} mm gussets, ${if (inp.welded) "fillet welded" else "M${f0(inp.boltDia)} bolts"}",
             "Wind" to "Vb ${f1(inp.vb)} m/s, terrain ${inp.terrain}, eaves ${f1(inp.eavesHeight)} m",
         )
         rb.fig(figure(model, groups))
@@ -306,14 +308,18 @@ object RoofTruss {
         rb.h("5. Purlins — $purlin, simply supported over ${f2(inp.spacing)} m")
         rb.p("Gravity: 1.5(DL + LL) resolved normal / parallel to the slope; uplift: 1.5WL − 0.9DL with the bottom flange unrestrained. No sag rods assumed.")
         rb.checks(pChecks)
-        rb.h("6. Connections — gussets and bolts").steps(detail.steps).checks(detail.checks)
-        rb.table(listOf("Member", "Section", "Design force (kN)", "Bolts per end", "Bolt value (kN)"), model.members.map { m ->
-            val e = detail.ends.first { it.member == m.id }
-            listOf("M${m.id}", m.section.name, f1(e.force), "${e.bolts} M${f0(inp.boltDia)}", f2(e.boltValue))
-        }, listOf(0.7f, 1.4f, 1f, 1f, 1f))
+        rb.h("6. Connections — gussets and ${if (inp.welded) "welds" else "bolts"}").steps(detail.steps).checks(detail.checks)
+        if (inp.welded) rb.table(listOf("Member", "Section", "Design force (kN)", "Weld", "Heel / toe (mm)", "Whitmore Tdg (kN)"), model.members.map { m ->
+            val w = detail.welds.first { it.member == m.id }; val gr = detail.gusset.first { it.member == m.id }
+            listOf("M${m.id}", m.section.name, f1(gr.force), "${f0(w.size)} mm fillet", "${f0(w.heel)} / ${f0(w.toe)}", f1(gr.tdg))
+        }, listOf(0.7f, 1.4f, 1f, 1f, 1f, 1f))
+        else rb.table(listOf("Member", "Section", "Design force (kN)", "Bolts per end", "Bolt value (kN)", "Whitmore / block (kN)"), model.members.map { m ->
+            val e = detail.ends.first { it.member == m.id }; val gr = detail.gusset.first { it.member == m.id }
+            listOf("M${m.id}", m.section.name, f1(e.force), "${e.bolts} M${f0(inp.boltDia)}", f2(e.boltValue), "${f1(gr.tdg)} / ${f1(gr.tdb ?: 0.0)}")
+        }, listOf(0.7f, 1.4f, 1f, 1f, 1f, 1.2f))
         detail.joints.forEach { rb.fig(it) }
         rb.h("7. Notes")
-        rb.p("Connections: gusset plates and bolt groups to be detailed for the member forces above (IS 800 Cl. 10). Cpe values to be confirmed from IS 875-3 Table 6 for the actual roof angle and building h/w; truss to be braced in the plane of the roof and the bottom chord.")
+        rb.p("Connections: gusset outlines are an automatic first layout — confirm free-edge lengths, edge distances to the gusset boundary and weld access on the shop drawing (IS 800 Cl. 10). Cpe values to be confirmed from IS 875-3 Table 6 for the actual roof angle and building h/w; truss to be braced in the plane of the roof and the bottom chord.")
         return Result(model, thDeg, ll, pd, groups, purlin, pChecks, rb.build(), forces, detail)
     }
 

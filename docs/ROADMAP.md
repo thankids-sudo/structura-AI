@@ -73,4 +73,5 @@ Each step is built, tested and committed separately.
 - [x] 6.5 Cantilever retaining wall
 - [x] 6.6 PDF reports (design modules and frame analysis)
 - [x] 6.7 Counterfort retaining wall (continuous stem/heel slabs, T-beam counterfort, ties); double-angle truss members (IS 800 Cl. 7.5.2, tack spacing Cl. 7.8.1); gusset / bolt joint sketches in the PDF and a DXF detail drawing
+- [x] 6.8 Gusset Whitmore yield and block shear (IS 800 Cl. 6.2, 6.4.1); welded truss connections (Cl. 10.5.7); counterfort weight net of displaced fill
 
