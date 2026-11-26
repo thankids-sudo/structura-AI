@@ -1,5 +1,25 @@
 package com.structura.app.ui.home
 
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
+import kotlinx.coroutines.delay
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.text.style.TextAlign
+import com.structura.app.ui.fem.TapInfo
+import com.structura.app.ui.fem.Plane
+import com.structura.app.ui.fem.WorkPlane
+import com.structura.core.fem.ModelOps
+import com.structura.core.fem.ModelEditor
+import com.structura.core.fem.RccModelDesign
+import com.structura.core.fem.Validation
+import com.structura.core.fem.LoadCase
+import com.structura.core.fem.LoadDir
+import com.structura.core.fem.Vec3
+import kotlin.math.max
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -68,16 +88,21 @@ import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
 // Workbench palette (logo colours)
-private val Ground = Color(0xFF0E1726)
-private val Panel = Color(0xFF16233A)
-private val Bar = Color(0xFF121F33)
-private val Line = Color(0xFF24364F)
-private val Ink = Color(0xFFE6EEF8)
-private val Muted = Color(0xFF93A4BD)
-private val Cyan = Color(0xFF3DD6F5)
-private val Orange = Color(0xFFF5A524)
-private val Green = Color(0xFF4ADE80)
-private val Dark = Color(0xFF0B1320)
+// black-and-white "paper" palette (engineering-drawing look)
+private val Paper = Color.White
+private val InkB = Color(0xFF111111)
+private val Grey = Color(0xFF6B6B6B)
+private val Hair = Color(0xFFD4D4D4)
+private val Ground = Paper
+private val Panel = Paper
+private val Bar = Color(0xFFFAFAFA)
+private val Line = Hair
+private val Ink = InkB
+private val Muted = Grey
+private val Cyan = InkB
+private val Orange = InkB
+private val Green = InkB
+private val Dark = InkB
 
 private enum class Phase(val no: String, val label: String, val title: String, val codes: String) {
     RCC("01", "RCC", "RCC design", "IS 456 · SP 16 · IS 2502"),
@@ -133,7 +158,15 @@ private fun tools(p: Phase): List<Tool> = when (p) {
     )
 }
 
-/** Workbench home: the current model live in UCS space, phases docked on both sides, actions along the bottom. */
+/** Main-space modes: one canvas, the tools change with the mode. */
+private enum class Mode(val label: String) { MODEL("Model"), EDIT("Edit"), LOADS("Loads"), ANALYSE("Analyse"), DESIGN("Design") }
+
+/**
+ * Workbench — the whole structure in one black-and-white main space. Model (inspect), Edit (draw, select, move,
+ * copy, mirror, rotate, properties), Loads (cases, nodal loads, UDLs, self-weight), Analyse (live, animated
+ * deflected shape and force diagrams per combination) and Design (every member designed to IS 456 / IS 800 /
+ * IS 13920 with clause-wise checks, plus a validation list). Tapping a member or node opens its inspector.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WorkbenchHome(onOpen: (String) -> Unit) {
@@ -141,80 +174,100 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     val sample = remember { Benchmarks.building().copy(title = "Sample: 3-storey RCC frame") }
     val model: FrameModel = DesignSession.currentModel ?: sample
-    androidx.compose.runtime.LaunchedEffect(Unit) { if (DesignSession.currentModel == null) DesignSession.currentModel = sample }
+    LaunchedEffect(Unit) { if (DesignSession.currentModel == null) DesignSession.currentModel = sample }
     val camera = remember { Camera() }
+    var mode by remember { mutableStateOf(Mode.MODEL) }
     var sheet by remember { mutableStateOf<Phase?>(null) }
-    var results by remember(model) { mutableStateOf<List<Pair<LoadCombination, FrameResults>>?>(null) }
-    var util by remember(model) { mutableStateOf<Map<Int, Double>?>(null) }
-    var review by remember(model) { mutableStateOf<ResultCheck.Review?>(null) }
-    var showReview by remember { mutableStateOf(false) }
+    var menu by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("Σ static check —") }
-    // viewport state: result view, combination, load case shown, build-in, idle spin, gesture hint
-    var view by remember(model) { mutableStateOf(ResultView.MODEL) }
-    var combo by remember(model) { mutableStateOf(0) }
-    val cases = remember(model) { (model.nodalLoads.map { it.case } + model.memberLoads.map { it.case }).distinct() }
-    var caseIdx by remember(model) { mutableStateOf(0) }          // 0 = first case … cases.size = all, cases.size + 1 = off
-    val caseSel: String? = when { cases.isEmpty() -> null; caseIdx < cases.size -> cases[caseIdx]; caseIdx == cases.size -> null; else -> "" }
-    val reveal = remember(model) { androidx.compose.animation.core.Animatable(0f) }
-    androidx.compose.runtime.LaunchedEffect(model) { reveal.animateTo(1f, androidx.compose.animation.core.tween(1400, easing = androidx.compose.animation.core.FastOutSlowInEasing)) }
-    var spin by remember { mutableStateOf(true) }
+    var status by remember { mutableStateOf("") }
     var hint by remember { mutableStateOf(true) }
-    androidx.compose.runtime.LaunchedEffect(spin) {
-        var last = 0L
-        while (spin) {
-            androidx.compose.runtime.withFrameNanos { t -> if (last != 0L) camera.yaw += (t - last) / 1e9f * 9f; last = t }
-        }
-    }
-    androidx.compose.runtime.LaunchedEffect(Unit) { kotlinx.coroutines.delay(6000); hint = false }
+    LaunchedEffect(Unit) { delay(6000); hint = false }
+    val projectKey = com.structura.app.project.ProjectStore.current?.name ?: model.title
+    val reveal = remember(projectKey) { Animatable(0f) }
+    LaunchedEffect(projectKey) { reveal.animateTo(1f, tween(1300, easing = FastOutSlowInEasing)) }
 
-    // ---- drawing in the main space (same tools as the Studio, compact)
-    var draw by remember { mutableStateOf(false) }
-    var tool by remember { mutableStateOf(DrawTool.MEMBER) }
-    var plane by remember { mutableStateOf(com.structura.app.ui.fem.Plane.XZ) }
-    var snap by remember { mutableStateOf(1.0) }
+    // ---- analysis (live) ----
+    var results by remember(model) { mutableStateOf<List<Pair<LoadCombination, FrameResults>>?>(null) }
+    var analysisError by remember(model) { mutableStateOf<String?>(null) }
+    var view by remember { mutableStateOf(ResultView.DEFORMED) }
+    var combo by remember(model) { mutableStateOf(0) }
+    // ---- design + validation ----
+    var rcc by remember(model) { mutableStateOf<List<RccModelDesign.MemberDesign>?>(null) }
+    var steel by remember(model) { mutableStateOf<List<SteelModelCheck.MemberCheck>>(emptyList()) }
+    var validation by remember(model) { mutableStateOf<Validation.Report?>(null) }
+    var showValidation by remember { mutableStateOf(false) }
+    // ---- edit ----
+    var tool by remember { mutableStateOf(DrawTool.SELECT) }
+    var sel by remember { mutableStateOf(ModelOps.Sel()) }
+    var op by remember { mutableStateOf<EditOp?>(null) }
+    var opSel by remember { mutableStateOf(ModelOps.Sel()) }
     var pending by remember { mutableStateOf<Int?>(null) }
-    var selNode by remember { mutableStateOf<Int?>(null) }
-    var selMember by remember { mutableStateOf<Int?>(null) }
-    var loadVal by remember { mutableStateOf("-10") }
-    var loadCase by remember { mutableStateOf(com.structura.core.fem.LoadCase.DL) }
+    var plane by remember { mutableStateOf(Plane.XZ) }
+    var snap by remember { mutableStateOf(1.0) }
     var undo by remember { mutableStateOf(listOf<FrameModel>()) }
     var redo by remember { mutableStateOf(listOf<FrameModel>()) }
-    var autoRun by remember { mutableStateOf(true) }
-    var sel by remember { mutableStateOf(com.structura.core.fem.ModelOps.Sel()) }
-    var op by remember { mutableStateOf<EditOp?>(null) }
-    // whole-model design (RCC beams / columns + IS 800 steel), shown on the members and in a list
-    var design by remember(model) { mutableStateOf<Map<Int, Triple<Double, Boolean, String>>?>(null) }
-    var rccDesign by remember(model) { mutableStateOf<List<com.structura.core.fem.RccModelDesign.MemberDesign>>(emptyList()) }
-    var showDesign by remember { mutableStateOf(false) }
+    // ---- loads ----
+    var loadCase by remember { mutableStateOf(LoadCase.DL) }
+    var loadVal by remember { mutableStateOf("-10") }
+    var onMembers by remember { mutableStateOf(true) }
+    // ---- inspector ----
+    var inspM by remember { mutableStateOf<Int?>(null) }
+    var inspN by remember { mutableStateOf<Int?>(null) }
+    var inspTab by remember { mutableStateOf(0) }
+    if (inspM != null && model.members.none { it.id == inspM }) inspM = null
+    if (inspN != null && model.nodes.none { it.id == inspN }) inspN = null
+
     fun commit(m: FrameModel, msg: String) {
-        undo = (undo + model).takeLast(60); redo = emptyList()
+        undo = (undo + model).takeLast(80); redo = emptyList()
         DesignSession.currentModel = m
         com.structura.app.project.ProjectStore.save(context)
         status = msg
-        sel = com.structura.core.fem.ModelOps.Sel(sel.nodes.filter { id -> m.nodes.any { it.id == id } }.toSet(), sel.members.filter { id -> m.members.any { it.id == id } }.toSet())
+        sel = ModelOps.Sel(sel.nodes.filter { id -> m.nodes.any { it.id == id } }.toSet(), sel.members.filter { id -> m.members.any { it.id == id } }.toSet())
     }
-    fun runDesign(only: Set<Int>? = null) {
+    fun setModel(m: FrameModel, msg: String) { DesignSession.currentModel = m; com.structura.app.project.ProjectStore.save(context); status = msg }
+
+    // live analysis: every change is re-analysed in the background
+    LaunchedEffect(model) {
+        if (model.supports.isEmpty() || model.members.isEmpty()) { analysisError = if (model.members.isEmpty()) null else "Add supports to analyse"; return@LaunchedEffect }
+        delay(450)
+        try {
+            val res = withContext(Dispatchers.Default) { FrameSolver.analyseAll(model, LoadCombination.forModel(model.loadCases)) }
+            results = res
+            combo = res.indices.maxByOrNull { res[it].second.maxDisplacement().second } ?: 0
+        } catch (e: Exception) { analysisError = e.message ?: "analysis failed" }
+    }
+    // design + validation whenever the design mode is open (or asked for)
+    fun runDesign() {
+        val res = results ?: run { status = analysisError ?: "Analysing…"; return }
         busy = true
         scope.launch {
             try {
-                val res = results ?: withContext(Dispatchers.Default) { FrameSolver.analyseAll(model, LoadCombination.forModel(model.loadCases)) }.also { results = it }
-                val (rcc, steel) = withContext(Dispatchers.Default) { com.structura.core.fem.RccModelDesign.design(model, res) to SteelModelCheck.check(model, res) }
-                rccDesign = rcc
-                val map = HashMap<Int, Triple<Double, Boolean, String>>()
-                rcc.forEach { map[it.member] = Triple(it.utilisation, it.ok, it.summary) }
-                steel.forEach { c -> map[c.member] = Triple(c.utilisation, c.ok, "Steel ${c.section} ${c.grade}: η ${"%.2f".format(c.utilisation)} (${c.combination}) ${if (c.ok) "✔" else "✘"}") }
-                design = if (only != null) map.filterKeys { it in only } else map
-                util = design!!.mapValues { it.value.first }
-                view = ResultView.MODEL
-                val bad = design!!.values.count { !it.second }
-                status = "Design: ${rcc.count { it.kind == "Beam" }} RCC beams, ${rcc.count { it.kind == "Column" }} columns, ${steel.size} steel — " + if (bad == 0) "all ✔" else "$bad ✘"
-                showDesign = true
+                val (r, s) = withContext(Dispatchers.Default) { RccModelDesign.design(model, res) to SteelModelCheck.check(model, res) }
+                rcc = r; steel = s
+                validation = withContext(Dispatchers.Default) { Validation.run(model, res, r, s) }
+                val bad = r.count { !it.ok } + s.count { !it.ok }
+                status = "Designed ${r.count { it.kind == "Beam" }} beams, ${r.count { it.kind != "Beam" }} columns, ${s.size} steel — " + if (bad == 0) "all ✔" else "$bad ✘"
             } catch (e: Exception) { status = "Design: ${e.message}" } finally { busy = false }
         }
     }
-    fun onDrawTap(t: com.structura.app.ui.fem.TapInfo) {
-        val E = com.structura.core.fem.ModelEditor
+    LaunchedEffect(mode, results) { if (mode == Mode.DESIGN && results != null && rcc == null) runDesign() }
+
+    fun report() {
+        val res = results ?: run { status = "Analysis not ready"; return }
+        busy = true
+        scope.launch {
+            try {
+                val doc = withContext(Dispatchers.Default) {
+                    com.structura.core.fem.FemReportDoc.build(model, res, SteelModelCheck.check(model, res), ResultCheck.review(model, res))
+                }
+                com.structura.app.report.PdfExport.share(context, doc)
+            } catch (e: Exception) { status = "Report: ${e.message}" } finally { busy = false }
+        }
+    }
+
+    fun onEditTap(t: TapInfo) {
+        val E = ModelEditor
         val proto = model.members.lastOrNull()
         when (tool) {
             DrawTool.SELECT -> {
@@ -223,10 +276,9 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
                     t.member != null -> sel.copy(members = if (t.member in sel.members) sel.members - t.member else sel.members + t.member)
                     else -> sel
                 }
-                selNode = null; selMember = null
-                status = t.member?.let { id -> design?.get(id)?.third }?.let { "M${t.member} · $it" } ?: t.node?.let { id -> val n = model.node(id); "N$id (${"%.2f".format(n.x)}, ${"%.2f".format(n.y)}, ${"%.2f".format(n.z)}) m · ${E.supportType(model, id).name.lowercase()}" }
-                    ?: t.member?.let { id -> val m = model.members.first { it.id == id }; "M$id N${m.i}→N${m.j} · ${m.section.name} · ${"%.2f".format((model.node(m.j).pos - model.node(m.i).pos).length)} m" } ?: "Nothing selected" }
-            DrawTool.NODE -> t.planePoint?.let { p -> val (m, id) = E.addNode(model, p); if (m !== model) commit(m, "Node N$id") } ?: run { status = "Rotate the view — the work plane is edge-on" }
+                status = "${sel.members.size} members, ${sel.nodes.size} nodes selected"
+            }
+            DrawTool.NODE -> t.planePoint?.let { p -> val (m, id) = E.addNode(model, p); if (m !== model) commit(m, "Node N$id") } ?: run { status = "Turn the view — the work plane is edge-on" }
             DrawTool.MEMBER -> {
                 var m = model
                 val target = t.node ?: t.planePoint?.let { p -> E.addNode(m, p).also { m = it.first }.second }
@@ -245,18 +297,12 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
             }
             DrawTool.SPLIT -> t.member?.let { id -> val (m, nid) = E.splitMember(model, id); commit(m, "M$id split at N$nid") }
             DrawTool.FIX, DrawTool.PIN -> t.node?.let { id ->
-                val want = if (tool == DrawTool.FIX) com.structura.core.fem.ModelEditor.SupportType.FIXED else com.structura.core.fem.ModelEditor.SupportType.PINNED
+                val want = if (tool == DrawTool.FIX) ModelEditor.SupportType.FIXED else ModelEditor.SupportType.PINNED
                 val now = E.supportType(model, id)
-                commit(E.setSupport(model, id, if (now == want) com.structura.core.fem.ModelEditor.SupportType.NONE else want), if (now == want) "Support removed at N$id" else "${want.name.lowercase()} support at N$id")
+                commit(E.setSupport(model, id, if (now == want) ModelEditor.SupportType.NONE else want), if (now == want) "Support removed at N$id" else "${want.name.lowercase()} support at N$id")
             }
-            DrawTool.LOAD -> t.node?.let { id ->
-                val v = loadVal.replace(',', '.').toDoubleOrNull() ?: 0.0
-                commit(E.addNodalLoad(model, id, com.structura.core.fem.Vec3(0.0, 0.0, v * com.structura.app.Units.force), loadCase), "$loadCase ${"%.1f".format(v)} at N$id")
-            }
-            DrawTool.UDL -> t.member?.let { id ->
-                val v = loadVal.replace(',', '.').toDoubleOrNull() ?: 0.0
-                commit(E.addMemberUdl(model, id, com.structura.core.fem.LoadDir.GLOBAL_Z, v * com.structura.app.Units.udl, loadCase), "$loadCase UDL ${"%.1f".format(v)} on M$id")
-            }
+            DrawTool.LOAD -> t.node?.let { id -> val v = num(loadVal); commit(E.addNodalLoad(model, id, Vec3(0.0, 0.0, v * Units.force), loadCase), "$loadCase ${fmt1(v)} at N$id") }
+            DrawTool.UDL -> t.member?.let { id -> val v = num(loadVal); commit(E.addMemberUdl(model, id, LoadDir.GLOBAL_Z, v * Units.udl, loadCase), "$loadCase UDL ${fmt1(v)} on M$id") }
             DrawTool.DELETE -> when {
                 t.node != null -> commit(E.deleteNode(model, t.node), "N${t.node} deleted")
                 t.member != null -> commit(E.deleteMember(model, t.member), "M${t.member} deleted")
@@ -264,240 +310,321 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
             }
         }
     }
-    // re-analyse quietly whenever the model changes, then play the deflected shape (as in the Studio)
-    androidx.compose.runtime.LaunchedEffect(model, autoRun) {
-        if (!autoRun || model.supports.isEmpty() || model.members.isEmpty()) return@LaunchedEffect
-        kotlinx.coroutines.delay(if (draw) 700 else 1500)
-        runCatching {
-            val res = withContext(Dispatchers.Default) { FrameSolver.analyseAll(model, LoadCombination.forModel(model.loadCases)) }
-            if (res.isNotEmpty()) {
-                results = res
-                combo = res.indices.maxBy { res[it].second.maxDisplacement().second }
-                val fe = res.maxOf { (_, r) -> r.equilibriumError.maxOf { abs(it) } }
-                if (!draw) status = "Σ ${res.size} combos · ΣF ${"%.0e".format(fe)} kN · live deflected shape"
-                if (view == ResultView.MODEL && !draw) view = ResultView.DEFORMED
+
+    fun onTap(t: TapInfo) {
+        when (mode) {
+            Mode.EDIT -> onEditTap(t)
+            Mode.LOADS -> {
+                val v = num(loadVal)
+                if (onMembers) t.member?.let { id -> commit(ModelEditor.addMemberUdl(model, id, LoadDir.GLOBAL_Z, v * Units.udl, loadCase), "$loadCase UDL ${fmt1(v)} on M$id") }
+                    ?: run { status = "Tap a member to add the UDL" }
+                else t.node?.let { id -> commit(ModelEditor.addNodalLoad(model, id, Vec3(0.0, 0.0, v * Units.force), loadCase), "$loadCase ${fmt1(v)} at N$id") }
+                    ?: run { status = "Tap a node to add the load" }
+            }
+            else -> {
+                inspN = t.node; inspM = if (t.node == null) t.member else null
+                if (inspM != null || inspN != null) inspTab = when (mode) { Mode.DESIGN -> 2; Mode.ANALYSE -> 1; else -> 0 }
             }
         }
     }
 
-    fun open(t: Tool) { sheet = null; if (t.panel != 0) DesignSession.studioPanel = t.panel; onOpen(t.route) }
+    val shown = results?.getOrNull(combo)
+    val util: Map<Int, Double>? = if (mode == Mode.DESIGN && rcc != null) (rcc!!.associate { it.member to it.utilisation } + steel.associate { it.member to it.utilisation }) else null
 
-    suspend fun ensureResults(): List<Pair<LoadCombination, FrameResults>> = results ?: withContext(Dispatchers.Default) {
-        FrameSolver.analyseAll(model, LoadCombination.forModel(model.loadCases))
-    }.also { results = it }
-
-    fun analyse() {
-        busy = true
-        scope.launch {
-            try {
-                val res = ensureResults()
-                val fe = res.maxOf { (_, r) -> r.equilibriumError.maxOf { abs(it) } }
-                val me = res.maxOf { (_, r) -> r.momentEquilibriumError.maxOf { abs(it) } }
-                val steel = withContext(Dispatchers.Default) { SteelModelCheck.check(model, res) }
-                util = steel.takeIf { it.isNotEmpty() }?.associate { it.member to it.utilisation }
-                // show the governing combination's deflected shape, animated
-                combo = res.indices.maxBy { res[it].second.maxDisplacement().second }
-                view = ResultView.DEFORMED
-                status = "Σ ${res.size} combos · ΣF ${"%.0e".format(fe)} kN · ΣM ${"%.0e".format(me)} kN·m" +
-                    (util?.let { " · η max ${"%.2f".format(it.values.max())}" } ?: "")
-            } catch (e: Exception) { status = "Analysis: ${e.message}" } finally { busy = false }
-        }
-    }
-
-    fun aiReview() {
-        busy = true
-        scope.launch {
-            try {
-                val res = runCatching { ensureResults() }.getOrDefault(emptyList())
-                review = withContext(Dispatchers.Default) { ResultCheck.review(model, res) }
-                showReview = true
-            } finally { busy = false }
-        }
-    }
-
-    fun report() {
-        busy = true
-        scope.launch {
-            try {
-                val res = ensureResults()
-                val doc = withContext(Dispatchers.Default) {
-                    com.structura.core.fem.FemReportDoc.build(model, res, SteelModelCheck.check(model, res), review ?: ResultCheck.review(model, res))
-                }
-                com.structura.app.report.PdfExport.share(context, doc)
-            } catch (e: Exception) { status = "Report: ${e.message}" } finally { busy = false }
-        }
-    }
-
-    Column(Modifier.fillMaxSize().background(Ground).statusBarsPadding().navigationBarsPadding()) {
-        // top bar
-        Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Image(painterResource(com.structura.app.R.drawable.structura_logo), "Structura AI logo", Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)))
+    Column(Modifier.fillMaxSize().background(Paper).statusBarsPadding().navigationBarsPadding()) {
+        // ---------------- top bar
+        Row(Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Image(painterResource(com.structura.app.R.drawable.structura_logo), "Structura AI", Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)))
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f).clickable(role = Role.Button, onClickLabel = "Projects") { onOpen(Routes.PROJECTS) }) {
-                Text((com.structura.app.project.ProjectStore.current?.name ?: model.title) + "  ▾", color = Ink, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1)
-                Text("${model.members.size} members · ${model.nodes.size} nodes · ${model.supports.size} supports", color = Muted, fontSize = 11.sp)
+                Text((com.structura.app.project.ProjectStore.current?.name ?: model.title) + "  ▾", color = InkB, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1)
+                Text("${model.members.size} members · ${model.nodes.size} nodes · ${model.supports.size} supports · ${model.loadCases.joinToString(" ")}", color = Grey, fontSize = 11.sp, maxLines = 1)
             }
-            Pill(if (Units.imperial) "ft · kip" else "m · kN", false) { Units.set(context, !Units.imperial) }
-        }
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
-
-        // UCS space
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            val shown = results?.getOrNull(combo)
-            val showResults = !draw && view != ResultView.MODEL
-            FrameView3D(
-                model, if (showResults) shown?.second else null, if (showResults) view else ResultView.MODEL, Modifier.fillMaxSize(), animate = true, camera = camera,
-                memberUtil = if (!showResults) util else null, dark = true, loadCase = if (draw) null else caseSel, reveal = if (draw) 1f else reveal.value,
-                doubleTapFit = !draw, onTouch = { spin = false; hint = false },
-                workPlane = if (draw) com.structura.app.ui.fem.WorkPlane(plane, 0.0, snap, visible = true) else null,
-                onTap = if (draw) ({ t -> onDrawTap(t) }) else null,
-                selectedNode = if (draw) selNode else null, selectedMember = if (draw) selMember else null, pendingNode = if (draw) pending else null,
-                selectedNodes = if (draw) sel.nodes else emptySet(), selectedMembers = if (draw) sel.members else emptySet(),
-            )
-            Row(Modifier.align(Alignment.TopCenter).padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Pill("◇ 3D", true) { camera.iso() }
-                Pill("XY", false) { camera.top() }
-                Pill("XZ", false) { camera.front() }
-                Pill("YZ", false) { camera.right() }
-                if (draw) Pill("✓ Done", true) { draw = false; pending = null; selNode = null; selMember = null; sel = com.structura.core.fem.ModelOps.Sel(); camera.iso() }
-            }
-            if (!draw) Column(Modifier.align(Alignment.CenterStart).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("DESIGN", color = Muted, fontSize = 10.sp)
-                RailButton(Phase.RCC, sheet == Phase.RCC) { sheet = Phase.RCC }
-                RailButton(Phase.STEEL, sheet == Phase.STEEL) { sheet = Phase.STEEL }
-                RailButton(Phase.ROOF, sheet == Phase.ROOF) { sheet = Phase.ROOF }
-                RailButton(Phase.WALL, sheet == Phase.WALL) { sheet = Phase.WALL }
-            }
-            if (!draw) Column(Modifier.align(Alignment.CenterEnd).padding(end = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("MODEL", color = Muted, fontSize = 10.sp)
-                RailButton(Phase.FEM, sheet == Phase.FEM) { sheet = Phase.FEM }
-                RailButton(Phase.PLAN, sheet == Phase.PLAN) { sheet = Phase.PLAN }
-                RailButton(Phase.STAAD, sheet == Phase.STAAD) { sheet = Phase.STAAD }
-            }
-            val caption = when {
-                draw -> "✎ ${tool.hint}"
-                view != ResultView.MODEL && shown != null -> "${view.label} · ${shown.first.name}"
-                util != null -> "η · IS 800 · all combinations"
-                caseSel == null && cases.isNotEmpty() -> "Loads · all cases"
-                caseSel != null && caseSel != "" -> "Loads · $caseSel"
-                else -> ""
-            }
-            if (caption.isNotEmpty()) Text(caption, color = Orange, fontFamily = FontFamily.Monospace, fontSize = 11.sp, maxLines = 1,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 52.dp))
-            androidx.compose.animation.AnimatedVisibility(hint && !draw, Modifier.align(Alignment.BottomCenter).padding(bottom = 56.dp, start = 70.dp, end = 70.dp),
-                enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) {
-                Text("Drag to rotate · two fingers pan & zoom · double-tap to fit", textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = Ink.copy(alpha = 0.85f), fontSize = 12.sp,
-                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(Bar.copy(alpha = 0.85f)).padding(horizontal = 12.dp, vertical = 6.dp))
-            }
-            if (draw) Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Bar.copy(alpha = 0.92f)).padding(vertical = 6.dp)) {
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    DrawTool.entries.forEach { t -> Pill(t.label, tool == t) { tool = t; pending = null } }
+            Pill(if (Units.imperial) "ft·kip" else "m·kN", false) { Units.set(context, !Units.imperial) }
+            Spacer(Modifier.width(6.dp))
+            Box {
+                Pill("⋯", false) { menu = true }
+                DropdownMenu(menu, { menu = false }) {
+                    DropdownMenuItem({ Text("Projects") }, { menu = false; onOpen(Routes.PROJECTS) })
+                    DropdownMenuItem({ Text("PDF report (analysis + design)") }, { menu = false; report() })
+                    DropdownMenuItem({ Text("Validation list") }, { menu = false; if (validation == null) { mode = Mode.DESIGN }; showValidation = true })
+                    DropdownMenuItem({ Text("3D Studio (panels, floor loads, modal, buckling)") }, { menu = false; onOpen(Routes.STUDIO) })
+                    DropdownMenuItem({ Text("Frame wizard / templates") }, { menu = false; onOpen(Routes.FEM) })
+                    Phase.entries.forEach { p -> DropdownMenuItem({ Text("${p.no}  ${p.title}") }, { menu = false; sheet = p }) }
+                    DropdownMenuItem({ Text("Indian Standards") }, { menu = false; onOpen(Routes.STANDARDS) })
                 }
-                if (tool == DrawTool.SELECT) {
-                    val O = com.structura.core.fem.ModelOps
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("${sel.members.size} M · ${sel.nodes.size} N", color = Orange, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
-                        Pill("All", false) { sel = O.all(model) }
-                        Pill("None", false) { sel = com.structura.core.fem.ModelOps.Sel() }
-                        Pill("Invert", false) { sel = O.invert(model, sel) }
-                        Pill("Columns", false) { sel = sel.copy(members = sel.members + O.columns(model)) }
-                        Pill("Beams", false) { sel = sel.copy(members = sel.members + O.beams(model)) }
-                        Pill("Braces", false) { sel = sel.copy(members = sel.members + O.braces(model)) }
-                        Pill("Supports", false) { sel = sel.copy(nodes = sel.nodes + model.supports.map { it.node }) }
-                        Pill("Same level", false) {
-                            val z = (sel.nodes.firstOrNull() ?: sel.members.firstOrNull()?.let { id -> model.members.first { it.id == id }.i })?.let { model.node(it).z }
-                            if (z == null) status = "Select a node or beam first" else { val l = O.atLevel(model, z); sel = com.structura.core.fem.ModelOps.Sel(sel.nodes + l.nodes, sel.members + l.members) }
-                        }
-                        Pill("Similar", false) { sel.members.firstOrNull()?.let { sel = sel.copy(members = sel.members + O.similar(model, it)) } ?: run { status = "Select a member first" } }
+            }
+        }
+        // ---------------- mode tabs
+        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp).clip(RoundedCornerShape(10.dp)).border(BorderStroke(1.dp, InkB), RoundedCornerShape(10.dp))) {
+            Mode.entries.forEachIndexed { k, md ->
+                val on = md == mode
+                Box(Modifier.weight(1f).height(38.dp).background(if (on) InkB else Paper)
+                    .clickable(role = Role.Tab) { mode = md; pending = null; hint = false; if (md != Mode.EDIT) sel = ModelOps.Sel()
+                        if (md == Mode.EDIT) { camera.front(); plane = Plane.XZ } },
+                    contentAlignment = Alignment.Center) {
+                    Text(md.label, color = if (on) Paper else InkB, fontSize = 13.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal)
+                }
+                if (k < Mode.entries.size - 1) Box(Modifier.width(1.dp).height(38.dp).background(InkB))
+            }
+        }
+
+        // ---------------- canvas
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            val analyse = mode == Mode.ANALYSE
+            FrameView3D(
+                model, if (analyse) shown?.second else null, if (analyse) view else ResultView.MODEL, Modifier.fillMaxSize(), animate = true, camera = camera,
+                memberUtil = util, dark = false, mono = true,
+                loadCase = if (mode == Mode.LOADS) loadCase else "", reveal = reveal.value,
+                doubleTapFit = mode != Mode.EDIT && mode != Mode.LOADS, onTouch = { hint = false },
+                workPlane = if (mode == Mode.EDIT) WorkPlane(plane, 0.0, snap, visible = true) else null,
+                onTap = { onTap(it) },
+                selectedNode = inspN, selectedMember = inspM, pendingNode = pending,
+                selectedNodes = sel.nodes, selectedMembers = sel.members,
+            )
+            // caption
+            val caption = when (mode) {
+                Mode.MODEL -> "Tap a member or node to inspect"
+                Mode.EDIT -> tool.hint
+                Mode.LOADS -> "Case $loadCase · tap ${if (onMembers) "members for a UDL" else "nodes for a load"}"
+                Mode.ANALYSE -> analysisError ?: shown?.let { (c, r) -> "${view.label} · ${c.name}" + if (view == ResultView.DEFORMED) " · δmax ${fmt1(max(r.maxDisplacement().second, r.maxMemberDeflection()) * 1000)} mm" else "" } ?: "Analysing…"
+                Mode.DESIGN -> if (busy) "Designing…" else rcc?.let { "Line weight = utilisation η · ✘ = fails · tap a member" } ?: (analysisError ?: "Analysing…")
+            }
+            Text(caption, color = InkB, fontSize = 12.sp, maxLines = 2, modifier = Modifier.align(Alignment.TopStart).padding(start = if (mode == Mode.MODEL) 64.dp else 12.dp, top = 8.dp, end = 64.dp)
+                .background(Paper.copy(alpha = 0.85f)).padding(horizontal = 4.dp, vertical = 2.dp))
+            // view buttons
+            Column(Modifier.align(Alignment.TopEnd).padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Square("3D") { camera.iso() }; Square("XY") { camera.top(); if (mode == Mode.EDIT) plane = Plane.XY }
+                Square("XZ") { camera.front(); if (mode == Mode.EDIT) plane = Plane.XZ }; Square("YZ") { camera.right(); if (mode == Mode.EDIT) plane = Plane.YZ }
+                Square("⤢") { camera.fit() }
+            }
+            // phase rail (model mode)
+            if (mode == Mode.MODEL) Column(Modifier.align(Alignment.CenterStart).padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Phase.entries.forEach { p -> RailButton(p, sheet == p) { sheet = p } }
+            }
+            androidx.compose.animation.AnimatedVisibility(hint && mode == Mode.MODEL, Modifier.align(Alignment.Center).padding(horizontal = 70.dp),
+                enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) {
+                Text("Drag to rotate · two fingers pan & zoom · double-tap to fit", color = Paper, fontSize = 12.sp, textAlign = TextAlign.Center,
+                    modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(InkB.copy(alpha = 0.85f)).padding(horizontal = 12.dp, vertical = 6.dp))
+            }
+            // contextual tool strip
+            Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(8.dp).clip(RoundedCornerShape(12.dp))
+                .background(Paper.copy(alpha = 0.96f)).border(BorderStroke(1.dp, Hair), RoundedCornerShape(12.dp)).padding(vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                when (mode) {
+                    Mode.MODEL -> Strip {
+                        Pill("✎ Edit", false) { mode = Mode.EDIT; camera.front(); plane = Plane.XZ }
+                        Pill("↓ Loads", false) { mode = Mode.LOADS }
+                        Pill("▶ Results", false) { mode = Mode.ANALYSE }
+                        Pill("✔ Design", false) { mode = Mode.DESIGN }
+                        Pill("PDF", false) { report() }
                     }
-                    if (!sel.isEmpty) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        EditOp.entries.forEach { o -> Pill(o.label, false) {
-                            if (o == EditOp.DELETE) commit(O.delete(model, sel), "${sel.count} item(s) deleted").also { sel = com.structura.core.fem.ModelOps.Sel() }
-                            else if (o == EditOp.DESIGN) runDesign(sel.members)
-                            else op = o
+                    Mode.EDIT -> {
+                        Strip { DrawTool.entries.filter { it != DrawTool.LOAD && it != DrawTool.UDL }.forEach { t -> Pill(t.label, tool == t) { tool = t; pending = null } } }
+                        if (tool == DrawTool.SELECT) {
+                            Strip {
+                                Text("${sel.members.size}M ${sel.nodes.size}N", color = InkB, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                                Pill("All", false) { sel = ModelOps.all(model) }
+                                Pill("None", false) { sel = ModelOps.Sel() }
+                                Pill("Invert", false) { sel = ModelOps.invert(model, sel) }
+                                Pill("Columns", false) { sel = sel.copy(members = sel.members + ModelOps.columns(model)) }
+                                Pill("Beams", false) { sel = sel.copy(members = sel.members + ModelOps.beams(model)) }
+                                Pill("Braces", false) { sel = sel.copy(members = sel.members + ModelOps.braces(model)) }
+                                Pill("Supports", false) { sel = sel.copy(nodes = sel.nodes + model.supports.map { it.node }) }
+                                Pill("Level", false) {
+                                    val z = (sel.nodes.firstOrNull() ?: sel.members.firstOrNull()?.let { id -> model.members.first { it.id == id }.i })?.let { model.node(it).z }
+                                    if (z == null) status = "Select a node or beam first" else { val l = ModelOps.atLevel(model, z); sel = ModelOps.Sel(sel.nodes + l.nodes, sel.members + l.members) }
+                                }
+                                Pill("Similar", false) { sel.members.firstOrNull()?.let { sel = sel.copy(members = sel.members + ModelOps.similar(model, it)) } ?: run { status = "Select a member first" } }
+                            }
+                            if (!sel.isEmpty) Strip {
+                                EditOp.entries.forEach { o -> Pill(o.label, false) {
+                                    when (o) {
+                                        EditOp.DELETE -> { commit(ModelOps.delete(model, sel), "${sel.count} item(s) deleted"); sel = ModelOps.Sel() }
+                                        EditOp.DESIGN -> { mode = Mode.DESIGN; if (rcc == null) runDesign() }
+                                        else -> { opSel = sel; op = o }
+                                    }
+                                } }
+                            }
+                        }
+                        Strip {
+                            Pill("↶", false) { undo.lastOrNull()?.let { prev -> redo = redo + model; undo = undo.dropLast(1); setModel(prev, "Undo") } }
+                            Pill("↷", false) { redo.lastOrNull()?.let { nxt -> undo = undo + model; redo = redo.dropLast(1); setModel(nxt, "Redo") } }
+                            Plane.entries.forEach { pl -> Pill("Plane ${pl.name}", plane == pl) {
+                                plane = pl; when (pl) { Plane.XY -> camera.top(); Plane.XZ -> camera.front(); Plane.YZ -> camera.right() } } }
+                            listOf(0.5, 1.0, 1.5, 3.0).forEach { sn -> Pill("$sn m", snap == sn) { snap = sn } }
+                        }
+                    }
+                    Mode.LOADS -> {
+                        Strip {
+                            Pill("UDL on members", onMembers) { onMembers = true }
+                            Pill("Load at nodes", !onMembers) { onMembers = false }
+                            listOf(LoadCase.DL, LoadCase.LL, LoadCase.WL).forEach { c -> Pill(c, loadCase == c) { loadCase = c } }
+                            NumberBox(loadVal) { loadVal = it }
+                            Text(if (onMembers) (if (Units.imperial) "kip/ft" else "kN/m") else (if (Units.imperial) "kip" else "kN"), color = Grey, fontSize = 11.sp)
+                        }
+                        Strip {
+                            Pill(if (model.selfWeight) "Self-weight ✓" else "Self-weight ✗", model.selfWeight) { commit(model.copy(selfWeight = !model.selfWeight), "Self-weight ${if (!model.selfWeight) "on" else "off"} (IS 875-1)") }
+                            Pill("Clear $loadCase", false) { commit(model.copy(nodalLoads = model.nodalLoads.filter { it.case != loadCase }, memberLoads = model.memberLoads.filter { it.case != loadCase },
+                                pointLoads = model.pointLoads.filter { it.case != loadCase }), "$loadCase loads cleared") }
+                            Pill("Floor / wind / seismic ›", false) { DesignSession.studioPanel = 3; onOpen(Routes.STUDIO) }
+                            Text("− = downward (global Z)", color = Grey, fontSize = 11.sp)
+                        }
+                    }
+                    Mode.ANALYSE -> {
+                        Strip { listOf(ResultView.DEFORMED, ResultView.N, ResultView.VZ, ResultView.MY, ResultView.MZ).forEach { v -> Pill(v.label, view == v) { view = v } } }
+                        results?.let { rs -> if (rs.isNotEmpty()) Strip {
+                            Pill("◂", false) { combo = (combo - 1 + rs.size) % rs.size }
+                            Text("${combo + 1}/${rs.size}  ${rs[combo].first.name}", color = InkB, fontSize = 12.sp, maxLines = 1)
+                            Pill("▸", false) { combo = (combo + 1) % rs.size }
                         } }
                     }
-                }
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Pill("↶", false) { undo.lastOrNull()?.let { prev -> redo = redo + model; undo = undo.dropLast(1); DesignSession.currentModel = prev; com.structura.app.project.ProjectStore.save(context); status = "Undo" } }
-                    Pill("↷", false) { redo.lastOrNull()?.let { nxt -> undo = undo + model; redo = redo.dropLast(1); DesignSession.currentModel = nxt; com.structura.app.project.ProjectStore.save(context); status = "Redo" } }
-                    com.structura.app.ui.fem.Plane.entries.forEach { pl -> Pill("Plane " + pl.name, plane == pl) {
-                        plane = pl; when (pl) { com.structura.app.ui.fem.Plane.XY -> camera.top(); com.structura.app.ui.fem.Plane.XZ -> camera.front(); com.structura.app.ui.fem.Plane.YZ -> camera.right() } } }
-                    listOf(0.5, 1.0, 1.5, 3.0).forEach { sn -> Pill("${sn} m", snap == sn) { snap = sn } }
-                    if (tool == DrawTool.LOAD || tool == DrawTool.UDL) {
-                        androidx.compose.foundation.text.BasicTextField(loadVal, { loadVal = it }, singleLine = true,
-                            textStyle = androidx.compose.ui.text.TextStyle(color = Ink, fontSize = 13.sp, fontFamily = FontFamily.Monospace),
-                            cursorBrush = androidx.compose.ui.graphics.SolidColor(Cyan),
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
-                            modifier = Modifier.width(70.dp).border(BorderStroke(1.dp, Cyan), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 7.dp))
-                        Text(if (tool == DrawTool.LOAD) (if (com.structura.app.Units.imperial) "kip (Z)" else "kN (Z)") else (if (com.structura.app.Units.imperial) "kip/ft" else "kN/m"), color = Muted, fontSize = 11.sp)
-                        listOf("DL", "LL", "WL").forEach { c -> Pill(c, loadCase == c) { loadCase = c } }
+                    Mode.DESIGN -> Strip {
+                        Pill(if (busy) "Designing…" else "↻ Re-design", false) { if (!busy) { rcc = null; runDesign() } }
+                        validation?.let { v -> Pill("Validation ✘${v.errors} ⚠${v.warnings}", v.errors > 0) { showValidation = true } }
+                        rcc?.let { r -> Text("RCC ${r.size} · steel ${steel.size} · ✘ ${r.count { !it.ok } + steel.count { !it.ok }}", color = InkB, fontSize = 12.sp) }
+                        Pill("PDF", false) { report() }
                     }
                 }
-            }
-            // bottom viewport controls: load case / result view / combination / fit / spin
-            if (!draw) Row(
-                Modifier.align(Alignment.BottomCenter).fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (results == null || view == ResultView.MODEL) {
-                    if (cases.isNotEmpty()) Pill("Loads: " + when (caseSel) { null -> "All"; "" -> "Off"; else -> caseSel } + " ▸", false) { caseIdx = (caseIdx + 1) % (cases.size + 2) }
-                }
-                if (results != null) {
-                    listOf(ResultView.MODEL, ResultView.DEFORMED, ResultView.N, ResultView.MY, ResultView.MZ).forEach { v ->
-                        Pill(if (v == ResultView.MODEL) "Model" else v.label, view == v) { view = v; spin = false }
-                    }
-                    results?.let { rs ->
-                        if (view != ResultView.MODEL && rs.size > 1) {
-                            Pill("◂", false) { combo = (combo - 1 + rs.size) % rs.size }
-                            Text("${combo + 1}/${rs.size}", color = Muted, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
-                            Pill("▸", false) { combo = (combo + 1) % rs.size }
-                        }
-                    }
-                }
-                Pill("✎ Edit", false) { draw = true; spin = false; hint = false; camera.front(); plane = com.structura.app.ui.fem.Plane.XZ; status = "Draw: pick a tool, tap the grid" }
-                Pill("⤢ Fit", false) { camera.fit() }
-                Pill(if (spin) "⏸ Spin" else "⟳ Spin", spin) { spin = !spin }
             }
         }
 
-        // status strip
-        Row(Modifier.fillMaxWidth().background(Bar).border(BorderStroke(1.dp, Line)).padding(horizontal = 14.dp, vertical = 6.dp)) {
-            Text(if (busy) "Working…" else status, color = Muted, fontFamily = FontFamily.Monospace, fontSize = 10.sp, maxLines = 1, modifier = Modifier.weight(1f))
-            review?.let { Text("AI ${it.errors}✘ ${it.warnings}⚠", color = if (it.errors > 0) Orange else Green, fontFamily = FontFamily.Monospace, fontSize = 10.sp) }
+        // ---------------- inspector
+        val im = inspM?.let { id -> model.members.firstOrNull { it.id == id } }
+        val inode = inspN?.let { id -> model.nodes.firstOrNull { it.id == id } }
+        if (im != null || inode != null) Column(Modifier.fillMaxWidth().heightIn(max = 330.dp).border(BorderStroke(1.dp, InkB)).background(Paper)) {
+            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                val title = if (im != null) {
+                    val len = (model.node(im.j).pos - model.node(im.i).pos).length
+                    val kind = rcc?.firstOrNull { it.member == im.id }?.kind ?: if (im.id in ModelOps.columns(model)) "Column" else if (im.id in ModelOps.beams(model)) "Beam" else "Member"
+                    "M${im.id} · $kind · ${im.section.name} · ${im.material.name} · ${fmt2(len)} m"
+                } else "N${inode!!.id} · (${fmt2(inode.x)}, ${fmt2(inode.y)}, ${fmt2(inode.z)}) m"
+                Text(title, color = InkB, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.weight(1f), maxLines = 1)
+                Pill("✕", false) { inspM = null; inspN = null }
+            }
+            if (im != null) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("Properties", "Forces", "Design").forEachIndexed { k, t -> Pill(t, inspTab == k) { inspTab = k; if (k == 2 && rcc == null) runDesign() } }
+                }
+                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    when (inspTab) {
+                        0 -> {
+                            Kv("Nodes", "N${im.i} → N${im.j}")
+                            Kv("Section", "${im.section.name} (b ${fmt0(im.section.b * 1000)}, h ${fmt0(im.section.h * 1000)} mm, A ${fmt0(im.section.a * 1e6)} mm²)")
+                            Kv("Material", "${im.material.name} · E ${fmt0(im.material.e / 1000)} MPa · γ ${fmt1(im.material.gamma)} kN/m³")
+                            Strip(pad = false) {
+                                Pill("▭ Change section", false) { opSel = ModelOps.Sel(members = setOf(im.id)); op = EditOp.SECTION }
+                                Pill("Hinge i", im.hingeI) { commit(ModelEditor.updateMember(model, im.id) { it.copy(hingeI = !it.hingeI) }, "M${im.id} hinge at i") }
+                                Pill("Hinge j", im.hingeJ) { commit(ModelEditor.updateMember(model, im.id) { it.copy(hingeJ = !it.hingeJ) }, "M${im.id} hinge at j") }
+                                Pill("Truss", im.truss) { commit(ModelEditor.updateMember(model, im.id) { it.copy(truss = !it.truss) }, "M${im.id} truss toggled") }
+                            }
+                            val ml = model.memberLoads.filter { it.member == im.id } + emptyList()
+                            Kv("Loads", if (ml.isEmpty()) "none" else ml.joinToString { "${it.case} ${fmt1(it.w)} kN/m" })
+                            Strip(pad = false) {
+                                Pill("⧉ Copy", false) { opSel = ModelOps.Sel(members = setOf(im.id)); op = EditOp.COPY }
+                                Pill("⇄ Move", false) { opSel = ModelOps.Sel(members = setOf(im.id)); op = EditOp.MOVE }
+                                Pill("⫶ Divide", false) { opSel = ModelOps.Sel(members = setOf(im.id)); op = EditOp.SPLIT }
+                                if (ml.isNotEmpty()) Pill("Clear loads", false) { commit(ModelEditor.clearLoadsOnMember(model, im.id), "Loads on M${im.id} cleared") }
+                                Pill("🗑 Delete", false) { commit(ModelEditor.deleteMember(model, im.id), "M${im.id} deleted"); inspM = null }
+                            }
+                        }
+                        1 -> {
+                            val rs = results
+                            if (rs == null) Text(analysisError ?: "Analysing…", color = Grey, fontSize = 12.sp) else {
+                                val e = remember(im.id, rs) { RccModelDesign.envelope(im.id, rs) }
+                                Text("Envelope over ${rs.size} combinations (IS 456 Table 18 / IS 875-5)", color = Grey, fontSize = 11.sp)
+                                Kv("Axial compression", "${fmt1(e.comp)} kN  (${e.govN})")
+                                Kv("Axial tension", "${fmt1(e.tens)} kN")
+                                Kv("Shear Vz / Vy", "${fmt1(e.vz)} / ${fmt1(e.vy)} kN  (${e.govV})")
+                                Kv("Moment My +sagging", "${fmt1(e.myPos)} kN·m")
+                                Kv("Moment My −hogging", "${fmt1(e.myNeg)} kN·m  (${e.govMy})")
+                                Kv("Moment Mz (minor)", "${fmt1(e.mz)} kN·m")
+                                Kv("Torsion", "${fmt1(e.mt)} kN·m")
+                                shown?.let { (c, r) -> val d = r.deformedShape(im.id, 1.0, 12); val z = r.deformedShape(im.id, 0.0, 12)
+                                    Kv("Max displacement (${c.name})", "${fmt1(d.indices.maxOf { (d[it] - z[it]).length } * 1000)} mm") }
+                            }
+                        }
+                        else -> {
+                            val rd = rcc?.firstOrNull { it.member == im.id }
+                            val sd = steel.firstOrNull { it.member == im.id }
+                            when {
+                                rcc == null -> Text(if (busy) "Designing…" else "Tap ↻ to design", color = Grey, fontSize = 12.sp)
+                                rd != null -> {
+                                    Text(rd.summary, color = InkB, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    if (rd.kind == "Beam") { Kv("Bottom (sagging)", rd.bottom); Kv("Top (hogging)", rd.top); Kv("Stirrups", rd.stirrups); Kv("l/d basis", rd.support) }
+                                    rd.checks.forEach { CheckRow(it) }
+                                    Strip(pad = false) {
+                                        if (rd.kind == "Beam") Pill("Full beam design ›", false) { DesignSession.prefill = DesignSession.Prefill(rd.b, rd.d, rd.span, max(rd.mu, rd.muHog), rd.vu); onOpen(Routes.RCC_BEAM) }
+                                        else Pill("Column designer ›", false) { onOpen(Routes.RCC_COLUMN) }
+                                    }
+                                }
+                                sd != null -> {
+                                    Text("Steel ${sd.section} ${sd.grade} · η ${fmt2(sd.utilisation)} (${sd.combination}) ${if (sd.ok) "✔" else "✘"}", color = InkB, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    sd.result.checks.forEach { CheckRow(it) }
+                                    Pill("Steel designer ›", false) { onOpen(Routes.STEEL) }
+                                }
+                                else -> Text("Not designed: use a rectangular RCC section (M-grade) or an IS 808 / hollow steel section.", color = Grey, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            } else if (inode != null) {
+                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val now = ModelEditor.supportType(model, inode.id)
+                    Strip(pad = false) {
+                        Text("Support", color = Grey, fontSize = 12.sp)
+                        ModelEditor.SupportType.entries.forEach { t -> Pill(t.name.lowercase().replace('_', ' '), now == t) { commit(ModelEditor.setSupport(model, inode.id, t), "N${inode.id}: ${t.name.lowercase()}") } }
+                    }
+                    val nl = model.nodalLoads.filter { it.node == inode.id }
+                    Kv("Loads", if (nl.isEmpty()) "none" else nl.joinToString { "${it.case} (${fmt1(it.values[0])}, ${fmt1(it.values[1])}, ${fmt1(it.values[2])}) kN" })
+                    shown?.let { (c, r) ->
+                        r.nodeDisplacements[inode.id]?.let { d -> Kv("Displacement (${c.name})", "ux ${fmt2(d[0] * 1000)}, uy ${fmt2(d[1] * 1000)}, uz ${fmt2(d[2] * 1000)} mm") }
+                        r.reactions[inode.id]?.let { f -> Kv("Reaction", "Fx ${fmt1(f[0])}, Fy ${fmt1(f[1])}, Fz ${fmt1(f[2])} kN; Mx ${fmt1(f[3])}, My ${fmt1(f[4])}, Mz ${fmt1(f[5])} kN·m") }
+                    }
+                    Strip(pad = false) {
+                        Pill("⇄ Move", false) { opSel = ModelOps.Sel(nodes = setOf(inode.id)); op = EditOp.MOVE }
+                        if (nl.isNotEmpty()) Pill("Clear loads", false) { commit(ModelEditor.clearLoadsAtNode(model, inode.id), "Loads at N${inode.id} cleared") }
+                        Pill("🗑 Delete", false) { commit(ModelEditor.deleteNode(model, inode.id), "N${inode.id} deleted"); inspN = null }
+                    }
+                }
+            }
         }
-        // actions
-        Row(Modifier.fillMaxWidth().background(Bar).padding(horizontal = 12.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Action("Analyse", primary = true, Modifier.weight(1f), icon = { c -> PlayIcon(c) }) { if (!busy) analyse() }
-            Action("AI review", primary = false, Modifier.weight(1f), icon = { c -> SparkIcon(c) }) { if (!busy) aiReview() }
-            Action("Design", primary = false, Modifier.weight(1f), icon = { c -> BarsIcon(c) }) { if (!busy) runDesign() }
-            Action("Report", primary = false, Modifier.weight(1f), icon = { c -> DocIcon(c) }) { if (!busy) report() }
+
+        // ---------------- status line
+        Row(Modifier.fillMaxWidth().border(BorderStroke(1.dp, Hair)).padding(horizontal = 12.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+            val base = when {
+                busy -> "Working…"
+                status.isNotEmpty() -> status
+                analysisError != null -> analysisError!!
+                results != null -> "Analysed: ${results!!.size} combinations · ΣF residual ${"%.0e".format(results!!.maxOf { (_, r) -> r.equilibriumError.maxOf { abs(it) } })} kN"
+                else -> "Analysing…"
+            }
+            Text(base, color = InkB, fontFamily = FontFamily.Monospace, fontSize = 10.sp, maxLines = 1, modifier = Modifier.weight(1f))
+            validation?.let { v -> Text("✘${v.errors} ⚠${v.warnings}", color = InkB, fontFamily = FontFamily.Monospace, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.clickable { showValidation = true }.padding(start = 8.dp)) }
         }
+    }
+
+    op?.let { o ->
+        EditOpDialog(o, model, opSel, onDismiss = { op = null }) { m2, newSel, msg -> commit(m2, msg); if (mode == Mode.EDIT) newSel?.let { sel = it }; op = null }
     }
 
     sheet?.let { p ->
-        ModalBottomSheet(onDismissRequest = { sheet = null }, containerColor = Panel) {
+        ModalBottomSheet(onDismissRequest = { sheet = null }, containerColor = Paper) {
             Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.Bottom) {
-                    Text("${p.no}  ", color = Orange, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
-                    Text(p.title, color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 18.sp, modifier = Modifier.weight(1f))
-                    Text(p.codes, color = Muted, fontSize = 11.sp)
+                    Text("${p.no}  ", color = Grey, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
+                    Text(p.title, color = InkB, fontWeight = FontWeight.SemiBold, fontSize = 18.sp, modifier = Modifier.weight(1f))
+                    Text(p.codes, color = Grey, fontSize = 11.sp)
                 }
-                // phase switcher
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Phase.entries.forEach { q -> Pill("${q.no} ${q.label}", q == p) { sheet = q } }
                 }
                 tools(p).forEach { t ->
-                    Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button) { open(t) }
-                            .border(BorderStroke(1.dp, Line), RoundedCornerShape(12.dp)).background(Ground).padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(t.label, color = Ink, fontSize = 15.sp)
-                            Text(t.note, color = Muted, fontSize = 11.sp)
-                        }
-                        Text("›", color = Cyan, fontSize = 20.sp)
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(role = Role.Button) { sheet = null; if (t.panel != 0) DesignSession.studioPanel = t.panel; onOpen(t.route) }
+                        .border(BorderStroke(1.dp, Hair), RoundedCornerShape(10.dp)).padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) { Text(t.label, color = InkB, fontSize = 15.sp); Text(t.note, color = Grey, fontSize = 11.sp) }
+                        Text("›", color = InkB, fontSize = 20.sp)
                     }
                     Spacer(Modifier.height(6.dp))
                 }
@@ -505,101 +632,98 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
         }
     }
 
-    op?.let { o ->
-        EditOpDialog(o, model, sel, onDismiss = { op = null }) { m2, newSel, msg -> commit(m2, msg); newSel?.let { sel = it }; op = null }
-    }
-
-    if (showDesign) design?.let { dm ->
-        ModalBottomSheet(onDismissRequest = { showDesign = false }, containerColor = Panel) {
-            Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Member design — IS 456 / IS 800", color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-                Text("Members are coloured by utilisation in the main space. Tap a row to select it there; beams open in the beam designer with their forces.", color = Muted, fontSize = 12.sp)
-                if (dm.isEmpty()) Text("No designable members: RCC needs a rectangular section with an M-grade concrete; steel needs an IS 808 / hollow section.", color = Orange, fontSize = 13.sp)
-                dm.entries.sortedByDescending { it.value.first }.forEach { (id, v) ->
-                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).border(BorderStroke(1.dp, Line), RoundedCornerShape(10.dp))
-                        .clickable { draw = true; tool = DrawTool.SELECT; sel = com.structura.core.fem.ModelOps.Sel(members = setOf(id)); showDesign = false; status = "M$id · ${v.third}" }
-                        .padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("M$id", color = if (v.second) Green else Color(0xFFEF6B5B), fontFamily = FontFamily.Monospace, fontSize = 13.sp, modifier = Modifier.width(48.dp))
-                        Text(v.third, color = Ink, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                        rccDesign.firstOrNull { it.member == id && it.kind == "Beam" }?.let { b ->
-                            Pill("Beam ›", false) {
-                                DesignSession.prefill = DesignSession.Prefill(b.b, b.d, b.span, b.mu, b.vu)
-                                showDesign = false; onOpen(Routes.RCC_BEAM)
-                            }
+    if (showValidation) ModalBottomSheet(onDismissRequest = { showValidation = false }, containerColor = Paper) {
+        Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Validation — model, analysis and member design", color = InkB, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+            val v = validation
+            if (v == null) Text(if (busy) "Designing…" else "Open the Design tab to run the design and validation.", color = Grey, fontSize = 13.sp)
+            else {
+                Text("${v.errors} error(s) · ${v.warnings} warning(s) · tap an item to show the member", color = Grey, fontSize = 12.sp)
+                v.items.forEach { it2 ->
+                    val mark = when (it2.level) { Validation.Level.ERROR -> "✘"; Validation.Level.WARN -> "⚠"; Validation.Level.INFO -> "ℹ"; Validation.Level.OK -> "✔" }
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).border(BorderStroke(1.dp, if (it2.level == Validation.Level.ERROR) InkB else Hair), RoundedCornerShape(8.dp))
+                        .clickable { it2.member?.let { m -> inspM = m; inspN = null; inspTab = 2; showValidation = false } }.padding(10.dp)) {
+                        Text(mark, color = InkB, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(24.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(it2.topic, color = InkB, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text(it2.message, color = InkB, fontSize = 12.sp)
+                            if (it2.clause.isNotEmpty()) Text(it2.clause, color = Grey, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                         }
                     }
                 }
-                Spacer(Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Pill("RCC tools", false) { showDesign = false; sheet = Phase.RCC }
-                    Pill("Steel tools", false) { showDesign = false; sheet = Phase.STEEL }
-                    Pill("Roof / walls", false) { showDesign = false; sheet = Phase.ROOF }
-                }
             }
         }
     }
+}
 
-    if (showReview) review?.let { r ->
-        ModalBottomSheet(onDismissRequest = { showReview = false }, containerColor = Panel) {
-            Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("AI result check", color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-                r.summary.forEach { Text(it, color = Muted, fontSize = 13.sp) }
-                r.findings.forEach { f ->
-                    val (mark, c) = when (f.level) {
-                        ResultCheck.Level.ERROR -> "✘" to Color(0xFFEF6B5B)
-                        ResultCheck.Level.WARN -> "⚠" to Orange
-                        ResultCheck.Level.INFO -> "ℹ" to Cyan
-                        ResultCheck.Level.OK -> "✔" to Green
-                    }
-                    Text("$mark ${f.topic}: ${f.message}" + if (f.clause.isNotEmpty()) "  [${f.clause}]" else "", color = c, fontSize = 13.sp)
-                }
-                Spacer(Modifier.height(4.dp))
-                Pill("Open in 3D Studio", true) { showReview = false; onOpen(Routes.STUDIO) }
-            }
+private fun num(s: String) = s.replace(',', '.').toDoubleOrNull() ?: 0.0
+private fun fmt0(v: Double) = String.format(java.util.Locale.US, "%.0f", v)
+private fun fmt1(v: Double) = String.format(java.util.Locale.US, "%.1f", v)
+private fun fmt2(v: Double) = String.format(java.util.Locale.US, "%.2f", v)
+
+@Composable
+private fun Strip(pad: Boolean = true, content: @Composable () -> Unit) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = if (pad) 8.dp else 0.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) { content() }
+}
+
+@Composable
+private fun Square(text: String, onClick: () -> Unit) {
+    Box(Modifier.size(38.dp).clip(RoundedCornerShape(8.dp)).background(Paper).border(BorderStroke(1.dp, InkB), RoundedCornerShape(8.dp))
+        .clickable(role = Role.Button, onClick = onClick), contentAlignment = Alignment.Center) { Text(text, color = InkB, fontSize = 12.sp) }
+}
+
+@Composable
+private fun Kv(k: String, v: String) {
+    Row(Modifier.fillMaxWidth()) {
+        Text(k, color = Grey, fontSize = 12.sp, modifier = Modifier.width(150.dp))
+        Text(v, color = InkB, fontSize = 12.sp, modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun CheckRow(c: com.structura.core.rcc.DesignCheck) {
+    val mark = when (c.status) { com.structura.core.rcc.Status.PASS -> "✔"; com.structura.core.rcc.Status.FAIL -> "✘"; com.structura.core.rcc.Status.INFO -> "ℹ" }
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Text(mark, color = InkB, fontSize = 13.sp, fontWeight = if (c.status == com.structura.core.rcc.Status.FAIL) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.width(20.dp))
+        Column(Modifier.weight(1f)) {
+            Text("${c.item}: ${c.value}", color = InkB, fontSize = 12.sp, fontWeight = if (c.status == com.structura.core.rcc.Status.FAIL) FontWeight.Bold else FontWeight.Normal)
+            Text("${c.requirement} · ${c.clause}", color = Grey, fontSize = 11.sp)
         }
     }
+}
+
+@Composable
+private fun NumberBox(value: String, onChange: (String) -> Unit) {
+    androidx.compose.foundation.text.BasicTextField(value, onChange, singleLine = true,
+        textStyle = androidx.compose.ui.text.TextStyle(color = InkB, fontSize = 13.sp, fontFamily = FontFamily.Monospace),
+        cursorBrush = androidx.compose.ui.graphics.SolidColor(InkB),
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+        modifier = Modifier.width(68.dp).border(BorderStroke(1.dp, InkB), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 7.dp))
 }
 
 @Composable
 private fun Pill(text: String, selected: Boolean, onClick: () -> Unit) {
     Box(
-        Modifier.height(34.dp).clip(RoundedCornerShape(17.dp))
-            .background(if (selected) Cyan.copy(alpha = 0.12f) else Ground)
-            .border(BorderStroke(1.dp, if (selected) Cyan else Line), RoundedCornerShape(17.dp))
+        Modifier.height(32.dp).clip(RoundedCornerShape(16.dp))
+            .background(if (selected) InkB else Paper)
+            .border(BorderStroke(1.dp, InkB), RoundedCornerShape(16.dp))
             .clickable(role = Role.Button, onClick = onClick).padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center,
-    ) { Text(text, color = if (selected) Cyan else Muted, fontSize = 12.sp, maxLines = 1) }
+    ) { Text(text, color = if (selected) Paper else InkB, fontSize = 12.sp, maxLines = 1) }
 }
 
 @Composable
 private fun RailButton(p: Phase, selected: Boolean, onClick: () -> Unit) {
-    val c = if (selected) Orange else Cyan
     Column(
-        Modifier.size(58.dp, 66.dp).clip(RoundedCornerShape(14.dp))
-            .background(if (selected) Color(0xFF2A2416) else Panel.copy(alpha = 0.92f))
-            .border(BorderStroke(1.dp, if (selected) Orange else Line), RoundedCornerShape(14.dp))
+        Modifier.size(48.dp, 50.dp).clip(RoundedCornerShape(10.dp))
+            .background(if (selected) InkB else Paper.copy(alpha = 0.94f))
+            .border(BorderStroke(1.dp, InkB), RoundedCornerShape(10.dp))
             .clickable(role = Role.Button, onClickLabel = p.title, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
     ) {
-        PhaseIcon(p, c)
-        Spacer(Modifier.height(4.dp))
-        Text(p.label, color = Ink, fontSize = 10.sp)
-    }
-}
-
-@Composable
-private fun Action(label: String, primary: Boolean, modifier: Modifier, icon: @Composable (Color) -> Unit, onClick: () -> Unit) {
-    val c = if (primary) Dark else Cyan
-    Column(
-        modifier.height(64.dp).clip(RoundedCornerShape(14.dp))
-            .background(if (primary) Cyan else Panel)
-            .border(BorderStroke(1.dp, if (primary) Cyan else Line), RoundedCornerShape(14.dp))
-            .clickable(role = Role.Button, onClick = onClick),
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
-    ) {
-        icon(c)
-        Spacer(Modifier.height(4.dp))
-        Text(label, color = if (primary) Dark else Ink, fontSize = 12.sp, fontWeight = if (primary) FontWeight.SemiBold else FontWeight.Normal)
+        PhaseIcon(p, if (selected) Paper else InkB)
+        Text(p.label, color = if (selected) Paper else InkB, fontSize = 9.sp)
     }
 }
 
@@ -621,33 +745,6 @@ private fun PhaseIcon(p: Phase, c: Color) = Canvas(Modifier.size(22.dp)) {
         Phase.WALL -> { l(4f, 4f, 4f, 20f); l(10f, 4f, 10f, 14f); l(10f, 14f, 20f, 14f); l(20f, 14f, 20f, 20f); l(4f, 20f, 20f, 20f); l(4f, 4f, 10f, 4f) }
         Phase.STAAD -> { l(2f, 18f, 22f, 18f); l(2f, 18f, 7f, 10f); l(7f, 10f, 17f, 10f); l(17f, 10f, 22f, 18f); l(7f, 10f, 10f, 18f); l(17f, 10f, 14f, 18f); l(12f, 10f, 12f, 18f) }
     }
-}
-
-@Composable
-private fun PlayIcon(c: Color) = Canvas(Modifier.size(18.dp)) {
-    drawPath(Path().apply { moveTo(size.width * 0.28f, size.height * 0.15f); lineTo(size.width * 0.85f, size.height * 0.5f); lineTo(size.width * 0.28f, size.height * 0.85f); close() }, c)
-}
-
-@Composable
-private fun SparkIcon(c: Color) = Canvas(Modifier.size(18.dp)) {
-    val m = size.width / 2; val w = 1.8f * size.width / 18
-    drawLine(c, androidx.compose.ui.geometry.Offset(m, 0f), androidx.compose.ui.geometry.Offset(m, size.height), w)
-    drawLine(c, androidx.compose.ui.geometry.Offset(0f, m), androidx.compose.ui.geometry.Offset(size.width, m), w)
-    drawCircle(c, size.width * 0.18f, androidx.compose.ui.geometry.Offset(m, m))
-}
-
-@Composable
-private fun BarsIcon(c: Color) = Canvas(Modifier.size(18.dp)) {
-    val w = 1.8f * size.width / 18; val h = size.height
-    drawLine(c, androidx.compose.ui.geometry.Offset(0f, h), androidx.compose.ui.geometry.Offset(size.width, h), w)
-    for ((x, top) in listOf(0.2f to 0.45f, 0.5f to 0.1f, 0.8f to 0.6f)) drawLine(c, androidx.compose.ui.geometry.Offset(size.width * x, h), androidx.compose.ui.geometry.Offset(size.width * x, h * top), w)
-}
-
-@Composable
-private fun DocIcon(c: Color) = Canvas(Modifier.size(18.dp)) {
-    val w = 1.8f * size.width / 18
-    drawRect(c, androidx.compose.ui.geometry.Offset(size.width * 0.2f, 0f), androidx.compose.ui.geometry.Size(size.width * 0.6f, size.height), style = Stroke(w))
-    for (y in listOf(0.35f, 0.55f, 0.75f)) drawLine(c, androidx.compose.ui.geometry.Offset(size.width * 0.32f, size.height * y), androidx.compose.ui.geometry.Offset(size.width * 0.68f, size.height * y), w)
 }
 
 

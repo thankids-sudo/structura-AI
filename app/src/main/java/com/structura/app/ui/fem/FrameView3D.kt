@@ -185,6 +185,9 @@ private object ModelEditorSnap {
     fun ceil(v: Double, s: Double) = if (s > 0) kotlin.math.ceil(v / s) * s else v
 }
 
+/** Colour scale: the RFEM-like heat map, or light grey → black in the black-and-white (paper) look. */
+fun shade(t: Float): Color = if (viewMono) lerp(Color(0xFFBDBDBD), Color(0xFF000000), t.coerceIn(0f, 1f)) else heat(t)
+
 /** Blue → cyan → green → yellow → red, as RFEM's deformation colour scale. */
 fun heat(t: Float): Color {
     val stops = listOf(Color(0xFF1565C0), Color(0xFF00ACC1), Color(0xFF43A047), Color(0xFFFDD835), Color(0xFFE53935))
@@ -236,8 +239,11 @@ fun FrameView3D(
     /** Multi-selection (Workbench edit mode). */
     selectedNodes: Set<Int> = emptySet(),
     selectedMembers: Set<Int> = emptySet(),
+    /** Black-and-white paper look (white ground, black ink, grey scales). */
+    mono: Boolean = false,
 ) {
-    viewDark = dark
+    viewDark = dark && !mono
+    viewMono = mono
     val touchCallback by rememberUpdatedState(onTouch)
     var canvasSize by remember { mutableStateOf(Size(1f, 1f)) }
     val tapCallback by rememberUpdatedState(onNodeTap)
@@ -257,14 +263,15 @@ fun FrameView3D(
     )
     val phase = grow.value * (if (animate && (view == ResultView.DEFORMED || view == ResultView.BUCKLING || view == ResultView.MODAL)) osc else 1f)
 
-    val ink = if (dark) Color(0xFFBFD7EA) else Color(0xFF1B2A41)
-    val pos = Color(0xFFC62828)
-    val neg = Color(0xFF1565C0)
-    val loadColor = Color(0xFFEF6C00)
+    val ink = if (mono) Color(0xFF111111) else if (dark) Color(0xFFBFD7EA) else Color(0xFF1B2A41)
+    val pos = if (mono) Color(0xFF111111) else Color(0xFFC62828)
+    val neg = if (mono) Color(0xFF7A7A7A) else Color(0xFF1565C0)
+    val loadColor = if (mono) Color(0xFF3A3A3A) else Color(0xFFEF6C00)
+    val selColor = if (mono) Color(0xFF000000) else Color(0xFFFFA000)
 
     Box(
         modifier
-            .background(if (dark) Color(0xFF0E1726) else Color.White)
+            .background(if (mono) Color.White else if (dark) Color(0xFF0E1726) else Color.White)
             .onSizeChanged { canvasSize = Size(it.width.toFloat(), it.height.toFloat()) }
             .pointerInput(camera, twoFingerPan) {
                 awaitEachGesture {
@@ -338,10 +345,19 @@ fun FrameView3D(
                 if (shownIds != null && m.id !in shownIds) continue
                 val sel = m.id == selectedMember || m.id in selectedMembers
                 val u = if (!faded) memberUtil?.get(m.id) else null
+                val pa = pj.screen(model.node(m.i).pos); val pb = pj.screen(model.node(m.j).pos)
+                if (sel && mono) drawLine(Color(0x33000000), pa, pb, 16f)
                 drawLine(
-                    if (sel) Color(0xFFFFA000) else if (u != null) (if (u > 1.0) Color(0xFFD50000) else heat(u.toFloat())) else if (faded) ink.copy(alpha = 0.25f) else ink,
-                    pj.screen(model.node(m.i).pos), pj.screen(model.node(m.j).pos), if (sel) 6f else if (u != null) 7f else if (faded) 2f else 4f,
+                    if (sel) selColor else if (u != null) (if (u > 1.0) (if (mono) Color.Black else Color(0xFFD50000)) else shade(u.toFloat())) else if (faded) ink.copy(alpha = 0.25f) else ink,
+                    pa, pb, if (sel) 6f else if (u != null) (if (mono) 2.5f + 4.5f * u.toFloat().coerceAtMost(1.3f) else 7f) else if (faded) 2f else if (mono) 3f else 4f,
                 )
+                if (u != null && mono && u > 1.0) drawLine(Color.White, pa, pb, 2f, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(8f, 6f)))
+                if (u != null && (u > 0.9 || model.members.size <= 30)) {
+                    val mid = (pa + pb) / 2f
+                    drawIntoCanvas { it.nativeCanvas.drawText((if (u > 1.0) "✘ " else "") + "%.2f".format(u), mid.x + 5, mid.y - 5,
+                        Paint().apply { textSize = 21f; isAntiAlias = true; color = if (viewDark) android.graphics.Color.WHITE else android.graphics.Color.BLACK
+                            if (u > 1.0) typeface = android.graphics.Typeface.DEFAULT_BOLD }) }
+                }
                 if (m.hingeI || m.hingeJ) {
                     val a = model.node(m.i).pos; val b = model.node(m.j).pos
                     if (m.hingeI) drawCircle(Color.White, 6f, pj.screen(a + (b - a) * 0.06), style = androidx.compose.ui.graphics.drawscope.Fill)
@@ -355,7 +371,7 @@ fun FrameView3D(
             for (n in model.nodes) {
                 if (shownIds != null && model.members.none { (it.i == n.id || it.j == n.id) && it.id in shownIds }) continue
                 val p = pj.screen(n.pos)
-                if (n.id == selectedNode || n.id == pendingNode || n.id in pendingNodes || n.id in selectedNodes) drawCircle(Color(0xFFFFA000), 16f, p, style = Stroke(4f))
+                if (n.id == selectedNode || n.id == pendingNode || n.id in pendingNodes || n.id in selectedNodes) drawCircle(selColor, 16f, p, style = Stroke(4f))
                 drawCircle(ink, 4.5f, p)
             }
             if (reveal >= 1f && loadCase != "" && view == ResultView.MODEL) loads(pj, model, loadColor, loadCase)
@@ -368,7 +384,7 @@ fun FrameView3D(
                     val poly = pts.map { (p, d) -> pj.screen(p + d * k) }
                     for (a in 1 until poly.size) {
                         val t = ((pts[a].second.length + pts[a - 1].second.length) / 2).toFloat()
-                        drawLine(heat(t), poly[a - 1], poly[a], 5f)
+                        drawLine(shade(t), poly[a - 1], poly[a], 5f)
                     }
                 }
                 drawIntoCanvas {
@@ -394,7 +410,7 @@ fun FrameView3D(
                         val poly = p.nodes.mapIndexed { q, id -> pj.screen(model.node(id).pos + disp[q] * kk) }
                         val mean = disp.sumOf { it.length } / 4
                         val path = Path().apply { moveTo(poly[0].x, poly[0].y); for (q in 1 until 4) lineTo(poly[q].x, poly[q].y); close() }
-                        drawPath(path, heat((mean / colourMax).toFloat()).copy(alpha = 0.55f))
+                        drawPath(path, shade((mean / colourMax).toFloat()).copy(alpha = 0.55f))
                         drawPath(path, Color(0x66000000), style = Stroke(1f))
                     }
                     for (m in model.members) {
@@ -403,7 +419,7 @@ fun FrameView3D(
                         val shown = results.deformedShape(m.id, kk, 16)
                         for (a in 1 until shown.size) {
                             val d = (real[a] - zero[a]).length
-                            drawLine(heat((d / colourMax).toFloat()), pj.screen(shown[a - 1]), pj.screen(shown[a]), 5f)
+                            drawLine(shade((d / colourMax).toFloat()), pj.screen(shown[a - 1]), pj.screen(shown[a]), 5f)
                         }
                     }
                     legend(maxD)
@@ -463,10 +479,11 @@ private fun segmentDistance(p: Offset, a: Offset, b: Offset): Float {
 
 /** Set by FrameView3D for its draw helpers (UI thread only). */
 private var viewDark = false
+private var viewMono = false
 
 private fun DrawScope.grid(pj: Projector, model: FrameModel, wp: WorkPlane) {
     val (lo, hi) = gridCorners(model, wp)
-    val c = if (viewDark) Color(0xFF24364F) else Color(0xFFB0BEC5)
+    val c = if (viewMono) Color(0xFFE0E0E0) else if (viewDark) Color(0xFF24364F) else Color(0xFFB0BEC5)
     val s = wp.snap.coerceAtLeast(0.1)
     fun lines(u0: Double, u1: Double, v0: Double, v1: Double, pt: (Double, Double) -> Vec3) {
         var u = u0
@@ -486,7 +503,8 @@ private fun DrawScope.grid(pj: Projector, model: FrameModel, wp: WorkPlane) {
 private fun DrawScope.axesTriad(pj: Projector) {
     val o = Offset(44f, size.height - 44f)
     val paint = Paint().apply { textSize = 26f; isAntiAlias = true }
-    val axes = if (viewDark) listOf(Triple(Vec3.X, Color(0xFFF5A524), "X"), Triple(Vec3.Y, Color(0xFF3DD6F5), "Y"), Triple(Vec3.Z, Color(0xFF4ADE80), "Z"))
+    val axes = if (viewMono) listOf(Triple(Vec3.X, Color.Black, "X"), Triple(Vec3.Y, Color(0xFF555555), "Y"), Triple(Vec3.Z, Color.Black, "Z"))
+    else if (viewDark) listOf(Triple(Vec3.X, Color(0xFFF5A524), "X"), Triple(Vec3.Y, Color(0xFF3DD6F5), "Y"), Triple(Vec3.Z, Color(0xFF4ADE80), "Z"))
     else listOf(Triple(Vec3.X, Color.Red, "X"), Triple(Vec3.Y, Color(0xFF2E7D32), "Y"), Triple(Vec3.Z, Color.Blue, "Z"))
     for ((v, c, l) in axes) {
         val (x, y) = pj.proj(v)
@@ -571,7 +589,7 @@ private fun DrawScope.drawArrow(from: Offset, to: Offset, c: Color, w: Float) {
 private fun DrawScope.utilLegend() {
     val x0 = size.width - 150f
     val y0 = 16f
-    for (k in 0 until 20) drawRect(heat(k / 19f), Offset(x0 + k * 6f, y0), Size(6f, 14f))
+    for (k in 0 until 20) drawRect(shade(k / 19f), Offset(x0 + k * 6f, y0), Size(6f, 14f))
     drawRect(Color(0xFFD50000), Offset(x0 + 124f, y0), Size(14f, 14f))
     val paint = Paint().apply { textSize = 22f; isAntiAlias = true; color = if (viewDark) android.graphics.Color.LTGRAY else android.graphics.Color.DKGRAY }
     drawIntoCanvas {
@@ -583,7 +601,7 @@ private fun DrawScope.utilLegend() {
 private fun DrawScope.legend(maxD: Double) {
     val x0 = size.width - 150f
     val y0 = 16f
-    for (k in 0 until 20) drawRect(heat(k / 19f), Offset(x0 + k * 6f, y0), Size(6f, 14f))
+    for (k in 0 until 20) drawRect(shade(k / 19f), Offset(x0 + k * 6f, y0), Size(6f, 14f))
     val paint = Paint().apply { textSize = 22f; isAntiAlias = true; color = if (viewDark) android.graphics.Color.LTGRAY else android.graphics.Color.DKGRAY }
     drawIntoCanvas {
         it.nativeCanvas.drawText("0", x0, y0 + 36f, paint)

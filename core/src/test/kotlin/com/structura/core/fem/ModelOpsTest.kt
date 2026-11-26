@@ -52,5 +52,12 @@ class ModelOpsTest {
         assertEquals(2, d.count { it.kind == "Column" })
         d.forEach { println(it.summary) }
         assertTrue(d.first { it.kind == "Beam" }.mu > 30)
+        val beam = d.first { it.kind == "Beam" }
+        assertTrue(beam.muHog > 10)                                     // portal beam: hogging at the knees
+        assertTrue(beam.checks.any { it.item.startsWith("Hogging") } && beam.checks.any { it.clause.contains("26.2.1") })
+        assertTrue(d.filter { it.kind == "Column" }.all { c -> c.checks.any { it.item == "Biaxial interaction" } })
+        val v = Validation.run(m, res, d, emptyList())
+        println("validation: ${v.errors} errors, ${v.warnings} warnings; " + v.items.joinToString(" | ") { it.topic })
+        assertTrue(v.items.isNotEmpty())
     }
 }
