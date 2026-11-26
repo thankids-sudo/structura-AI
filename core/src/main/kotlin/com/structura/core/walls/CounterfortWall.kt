@@ -28,16 +28,30 @@ import kotlin.math.sin
 object CounterfortWall {
     data class Input(
         val height: Double = 8.0, val spacing: Double = 3.0, val counterfort: Double = 0.4,
-        val stem: Double = 0.25, val base: Double = 0.0, val baseWidth: Double = 0.0, val toe: Double = 0.0,
+        val stem: Double = 0.0, val base: Double = 0.0, val baseWidth: Double = 0.0, val toe: Double = 0.0,
         val gammaSoil: Double = 18.0, val phi: Double = 30.0, val surcharge: Double = 10.0, val sbc: Double = 200.0, val mu: Double = 0.5,
         val fck: Double = 25.0, val fy: Double = 500.0, val cover: Double = 50.0, val bar: Double = 16.0,
     )
 
     class Result(val b: Double, val checks: List<DesignCheck>, val report: ReportDoc)
 
-    fun design(inp: Input): Result {
-        val h = inp.height
-        val d = if (inp.base > 0) inp.base else max(0.4, ceil(h / 16 / 0.05) * 0.05)
+    fun design(input: Input): Result {
+        val h = input.height
+        val d = if (input.base > 0) input.base else max(0.4, ceil(h / 16 / 0.05) * 0.05)
+        // stem thickness: given, or the least (25 mm steps, ≥ 200) for which the slab shear at the counterfort face passes (Cl. 40.2)
+        val inp = if (input.stem > 0) input else {
+            val ka0 = RetainingWall.ka(input.phi)
+            val p0 = 1.5 * ka0 * (input.gammaSoil * (h - d) + input.surcharge)
+            val v0 = p0 * (input.spacing - input.counterfort) / 2
+            var t = 0.2
+            while (t < 0.6) {
+                val dd = t * 1000 - input.cover - input.bar / 2
+                val ast = max(SlabDesigner.astFor(p0 * input.spacing * input.spacing / 12, dd, input.fck, input.fy), 0.0012 * 1e6 * t)
+                if (v0 * 1000 / (1000 * dd) <= IS456.tauC(100 * ast / (1000 * dd), input.fck)) break
+                t += 0.025
+            }
+            input.copy(stem = t)
+        }
         val ri = RetainingWall.Input(height = h, gammaSoil = inp.gammaSoil, phi = inp.phi, surcharge = inp.surcharge, sbc = inp.sbc, mu = inp.mu,
             fck = inp.fck, fy = inp.fy, cover = inp.cover, bar = inp.bar, stemTop = inp.stem)
         val hs = h - d
@@ -80,8 +94,9 @@ object CounterfortWall {
         slab("Stem at counterforts (mid-height)", pMid * l * l / 12, inp.stem, "earth face, upper half")
         val vStem = pBase * (l - inp.counterfort) / 2
         val dStem = inp.stem * 1000 - inp.cover - inp.bar / 2
-        val tvS = vStem * 1000 / (1000 * dStem); val tcS = IS456.tauC(0.25, inp.fck)
-        checks += DesignCheck("Stem shear", "τv = ${f3(tvS)} MPa", "≤ τc ≈ ${f3(tcS)} MPa", if (tvS <= tcS) Status.PASS else Status.FAIL, IS456.ref("Cl. 40.2"))
+        val astSup = max(SlabDesigner.astFor(pBase * l * l / 12, dStem, inp.fck, inp.fy), 0.0012 * 1e6 * inp.stem)
+        val tvS = vStem * 1000 / (1000 * dStem); val tcS = IS456.tauC(100 * astSup / (1000 * dStem), inp.fck)
+        checks += DesignCheck("Stem shear", "τv = ${f3(tvS)} MPa (stem ${f0(inp.stem * 1000)} mm${if (input.stem > 0) "" else ", auto"})", "≤ τc = ${f3(tcS)} MPa", if (tvS <= tcS) Status.PASS else Status.FAIL, IS456.ref("Cl. 40.2"))
         // heel: continuous slab, worst strip at the heel end (largest net downward load)
         val qHeelEnd = s.qmin
         val down = inp.gammaSoil * hs + inp.surcharge + 25 * d

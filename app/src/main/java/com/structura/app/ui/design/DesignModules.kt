@@ -88,14 +88,14 @@ object DesignModules {
         },
         DesignModule("counterfort_wall", "Counterfort retaining wall", "IS 456:2000 Cl. 20, 26, 38, 40", listOf(
             FieldSpec("h", "Height incl. base (m)", "8", group = "Geometry"), FieldSpec("l", "Counterfort spacing (m)", "3", group = "Geometry"),
-            FieldSpec("tc", "Counterfort thickness (m)", "0.4", group = "Geometry"), FieldSpec("stem", "Stem thickness (m)", "0.25", group = "Geometry"),
+            FieldSpec("tc", "Counterfort thickness (m)", "0.4", group = "Geometry"), FieldSpec("stem", "Stem thickness (blank = auto)", "", group = "Geometry"),
             FieldSpec("base", "Base thickness (blank = auto)", "", group = "Geometry"), FieldSpec("b", "Base width (blank = auto-size)", "", group = "Geometry"),
             FieldSpec("toe", "Toe (blank = B/4)", "", group = "Geometry"),
             FieldSpec("gamma", "Soil γ (kN/m³)", "18", group = "Soil"), FieldSpec("phi", "φ (°)", "30", group = "Soil"),
             FieldSpec("q", "Surcharge (kN/m²)", "10", group = "Soil"), FieldSpec("sbc", "SBC (kN/m²)", "200", group = "Soil"), FieldSpec("mu", "Base friction μ", "0.5", group = "Soil"),
             FieldSpec("fck", "fck (MPa)", "25", group = "Materials"), FieldSpec("fy", "fy (MPa)", "500", group = "Materials"), FieldSpec("bar", "Bar φ (mm)", "16", group = "Materials"),
         )) { v ->
-            CounterfortWall.design(CounterfortWall.Input(height = v.d("h", 8.0), spacing = v.d("l", 3.0), counterfort = v.d("tc", 0.4), stem = v.d("stem", 0.25),
+            CounterfortWall.design(CounterfortWall.Input(height = v.d("h", 8.0), spacing = v.d("l", 3.0), counterfort = v.d("tc", 0.4), stem = v.d("stem", 0.0),
                 base = v.d("base", 0.0), baseWidth = v.d("b", 0.0), toe = v.d("toe", 0.0), gammaSoil = v.d("gamma", 18.0), phi = v.d("phi", 30.0),
                 surcharge = v.d("q", 10.0), sbc = v.d("sbc", 200.0), mu = v.d("mu", 0.5), fck = v.d("fck", 25.0), fy = v.d("fy", 500.0), bar = v.d("bar", 16.0))).report to null
         },

@@ -105,7 +105,7 @@ class RoofWallsTest {
     @Test
     fun counterfortWall_stable() {
         val r = CounterfortWall.design(CounterfortWall.Input(height = 8.0))
-        r.checks.take(3).forEach { assertEquals(it.item, Status.PASS, it.status) }
+        r.checks.forEach { assertEquals(it.item, Status.PASS, it.status) }
         println("counterfort B=${r.b} " + r.checks.joinToString { it.item + ":" + it.status })
     }
 }
