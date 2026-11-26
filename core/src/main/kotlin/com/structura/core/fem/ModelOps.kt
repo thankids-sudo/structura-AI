@@ -162,7 +162,9 @@ object ModelOps {
             pointLoads = base.pointLoads + add.pointLoads.map { it.copy(member = it.member + m0) },
             planeXZ = base.planeXZ && add.planeXZ && base.nodes.isEmpty(),
         )
-        return merge(joined) to Sel(nodes.map { it.id }.toSet(), members.map { it.id }.toSet())
+        val merged = merge(joined)
+        val alive = merged.members.map { it.id }.toSet(); val aliveN = merged.nodes.map { it.id }.toSet()
+        return merged to Sel(nodes.map { it.id }.filter { it in aliveN }.toSet(), members.map { it.id }.filter { it in alive }.toSet())
     }
 
     // ---- selection helpers

@@ -31,13 +31,13 @@ class ModelOpsTest {
     fun mirror_move_rotate_merge() {
         val m = portal()
         val (mi, _) = ModelOps.mirror(m, ModelOps.Sel(members = setOf(1, 2, 3)), 'X', 5.0, keep = true)
-        assertEquals(6, mi.members.size); assertEquals(6, mi.nodes.size)          // shares the column line at x = 5
+        assertEquals(5, mi.members.size); assertEquals(6, mi.nodes.size)          // the column on x = 5 maps onto itself
         val mv = ModelOps.move(m, ModelOps.Sel(nodes = setOf(2, 3)), Vec3(0.0, 0.0, 0.5))
         assertEquals(3.5, mv.node(3).z, 1e-12)
         val (rt, _) = ModelOps.rotate(m, ModelOps.Sel(members = setOf(1, 2, 3)), 90.0, 0.0, 0.0, keep = true)
-        assertEquals(6, rt.members.size); assertEquals(7, rt.nodes.size)          // shares the left column
+        assertEquals(5, rt.members.size); assertEquals(6, rt.nodes.size)          // the left column lies on the axis
         val (ap, s) = ModelOps.append(m, m, Vec3(5.0, 0.0, 0.0))
-        assertEquals(6, ap.members.size); assertEquals(3, s.members.size)
+        assertEquals(5, ap.members.size); assertEquals(2, s.members.size)
         val sub = ModelOps.subdivide(m, setOf(2), 4)
         assertEquals(6, sub.members.size)
         assertEquals(setOf(1, 3), ModelOps.columns(m)); assertEquals(setOf(2), ModelOps.beams(m))
