@@ -30,6 +30,8 @@ enum class Layer(val dxfName: String, val aciColor: Int) {
     DIM("S-DIM", 4),           // cyan
     TEXT("S-TEXT", 2),         // yellow
     CENTER("S-CENTER", 6),     // magenta
+    STEEL("S-STEEL", 7),       // steel members and plates
+    BOLT("S-BOLT", 1),         // bolt holes
 }
 
 sealed class Prim {

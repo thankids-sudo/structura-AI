@@ -73,6 +73,7 @@ fun DesignModuleScreen(id: String, onBack: () -> Unit, onStudio: () -> Unit) {
     }
     var report by remember(id) { mutableStateOf<ReportDoc?>(null) }
     var model by remember(id) { mutableStateOf<FrameModel?>(null) }
+    var dxfText by remember(id) { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scroll = rememberScrollState()
@@ -110,6 +111,7 @@ fun DesignModuleScreen(id: String, onBack: () -> Unit, onStudio: () -> Unit) {
                     scope.launch {
                         try {
                             val (r, m) = withContext(Dispatchers.Default) { module.run(snapshot) }
+                            dxfText = module.dxf?.let { f -> withContext(Dispatchers.Default) { f(snapshot) } }
                             report = r; model = m
                             ProjectStore.saveInputs(context, id, snapshot)
                             scroll.animateScrollTo(scroll.maxValue)
@@ -122,6 +124,9 @@ fun DesignModuleScreen(id: String, onBack: () -> Unit, onStudio: () -> Unit) {
             report?.let { r ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { PdfExport.share(context, r) }, modifier = Modifier.weight(1f)) { Text("↓ PDF report") }
+                    dxfText?.let { d ->
+                        OutlinedButton(onClick = { com.structura.app.shareTextFile(context, "${module.id}.dxf", "application/dxf", d, module.title + " — detail drawing") }, modifier = Modifier.weight(1f)) { Text("↓ DXF") }
+                    }
                     model?.let { m ->
                         OutlinedButton(onClick = { DesignSession.studioModel = m; onStudio() }, modifier = Modifier.weight(1f)) { Text("◇ Open in 3D Studio") }
                     }

@@ -54,13 +54,17 @@ object RoofTruss {
         val cpeWindward: Double = -0.8, val cpeLeeward: Double = -0.4, val cpi: Double = 0.2,
         val grade: SteelGrade = SteelGrade.E250,
         val bolts: Int = 2, val holeDia: Double = 18.0,
+        val doubleAngles: Boolean = false,      // two angles back to back on the gusset
+        val gusset: Double = 8.0,               // mm
+        val boltDia: Double = 16.0,             // mm, grade 4.6
     )
 
     class Group(val name: String, val members: List<Int>, val length: Double, val tension: Double, val compression: Double,
                 val section: String, val result: com.structura.core.steel.SteelResult)
 
     class Result(val model: FrameModel, val slopeDeg: Double, val ll: Double, val pd: Double, val groups: List<Group>,
-                 val purlin: String, val purlinChecks: List<DesignCheck>, val report: ReportDoc, val forces: Map<Int, Pair<Double, Double>>)
+                 val purlin: String, val purlinChecks: List<DesignCheck>, val report: ReportDoc, val forces: Map<Int, Pair<Double, Double>>,
+                 val detail: TrussDetail.Result)
 
     /** Roof live load on plan for a sloping roof without access (IS 875-2 Table 2): 0.75 − 0.02(θ − 10) ≥ 0.4 kN/m². */
     fun roofLive(slopeDeg: Double) = if (slopeDeg <= 10) 0.75 else max(0.4, 0.75 - 0.02 * (slopeDeg - 10))
@@ -209,19 +213,24 @@ object RoofTruss {
                     ids.all { gravTen.getValue(it) > 0.5 || forces.getValue(it).second < 0.5 } -> 350.0
                     else -> 250.0
                 }
-                var k = 0; var r = AngleDesign.check(angles[0].second, angles[0].second, angles[0].third, inp.grade, t, c, len, inp.bolts, inp.holeDia, true, angles[0].first, slenderLimit = lim)
+                fun chk(a: Triple<String, Double, Double>) = if (inp.doubleAngles)
+                    AngleDesign.checkDouble(a.second, a.second, a.third, inp.gusset, inp.grade, t, c, len, inp.bolts, inp.holeDia, "2-" + a.first, slenderLimit = lim)
+                else AngleDesign.check(a.second, a.second, a.third, inp.grade, t, c, len, inp.bolts, inp.holeDia, true, a.first, slenderLimit = lim)
+                var k = 0; var r = chk(angles[0])
                 while (k < angles.size - 1 && (r.utilisation > 1.0 || r.checks.any { it.status == Status.FAIL })) {
                     k++
                     val a = angles[k]
-                    r = AngleDesign.check(a.second, a.second, a.third, inp.grade, t, c, len, inp.bolts, inp.holeDia, true, a.first, slenderLimit = lim)
+                    r = chk(a)
                 }
                 newChosen[g] = k
-                Group(g, ids, len, t, c, angles[k].first, r)
+                Group(g, ids, len, t, c, (if (inp.doubleAngles) "2-" else "") + angles[k].first, r)
             }
             model = model.copy(members = model.members.map { m ->
                 val g = groupsMap.entries.first { m.id in it.value }.key
                 val a = angles[newChosen.getValue(g)]
-                m.copy(section = Section.angle(a.second / 1000, a.second / 1000, a.third / 1000, a.first))
+                val one = Section.angle(a.second / 1000, a.second / 1000, a.third / 1000, a.first)
+                m.copy(section = if (!inp.doubleAngles) one else one.copy(name = "2-" + a.first, a = 2 * one.a, iy = 2 * one.iy, iz = 2 * one.iz, j = 2 * one.j,
+                    asy = 2 * one.asy, asz = 2 * one.asz, shape = "DOUBLE_ANGLE"))
             })
             if (newChosen == chosen) return@repeat
             chosen = newChosen
@@ -257,6 +266,14 @@ object RoofTruss {
             if (checks.all { it.status != Status.FAIL }) break
         }
 
+        // connections
+        val specs = model.members.associate { m ->
+            val gName = groupsMap.entries.first { m.id in it.value }.key
+            val a = angles[chosen[gName] ?: 0]
+            m.id to TrussDetail.MemberSpec(a.first, a.second, a.third)
+        }
+        val detail = TrussDetail.detail(model, specs, forces, inp.doubleAngles, inp.gusset, inp.boltDia, inp.grade)
+
         // report
         val ref = FrameSolver.analyseAll(model, combos)
         val eq = ref.maxOf { (_, r) -> r.equilibriumError.maxOf { abs(it) } }
@@ -265,7 +282,7 @@ object RoofTruss {
             "Truss type" to inp.type.label, "Span × rise" to "${f2(inp.span)} m × ${f2(inp.rise)} m (θ = ${f1(thDeg)}°)",
             "Truss spacing" to "${f2(inp.spacing)} m", "Purlin spacing" to "${f2(inp.purlinSpacing)} m on slope",
             "Sheeting / services" to "${f2(inp.sheeting)} kN/m² on slope / ${f2(inp.services)} kN/m² on plan",
-            "Steel" to "${inp.grade.name}, fy ${f0(inp.grade.fy)} MPa, fu ${f0(inp.grade.fu)} MPa; connections ${inp.bolts} bolts, hole ${f0(inp.holeDia)} mm",
+            "Steel" to "${inp.grade.name}, fy ${f0(inp.grade.fy)} MPa, fu ${f0(inp.grade.fu)} MPa; ${if (inp.doubleAngles) "double angles back to back" else "single angles"} on ${f0(inp.gusset)} mm gussets, M${f0(inp.boltDia)} bolts",
             "Wind" to "Vb ${f1(inp.vb)} m/s, terrain ${inp.terrain}, eaves ${f1(inp.eavesHeight)} m",
         )
         rb.fig(figure(model, groups))
@@ -289,9 +306,15 @@ object RoofTruss {
         rb.h("5. Purlins — $purlin, simply supported over ${f2(inp.spacing)} m")
         rb.p("Gravity: 1.5(DL + LL) resolved normal / parallel to the slope; uplift: 1.5WL − 0.9DL with the bottom flange unrestrained. No sag rods assumed.")
         rb.checks(pChecks)
-        rb.h("6. Notes")
+        rb.h("6. Connections — gussets and bolts").steps(detail.steps).checks(detail.checks)
+        rb.table(listOf("Member", "Section", "Design force (kN)", "Bolts per end", "Bolt value (kN)"), model.members.map { m ->
+            val e = detail.ends.first { it.member == m.id }
+            listOf("M${m.id}", m.section.name, f1(e.force), "${e.bolts} M${f0(inp.boltDia)}", f2(e.boltValue))
+        }, listOf(0.7f, 1.4f, 1f, 1f, 1f))
+        detail.joints.forEach { rb.fig(it) }
+        rb.h("7. Notes")
         rb.p("Connections: gusset plates and bolt groups to be detailed for the member forces above (IS 800 Cl. 10). Cpe values to be confirmed from IS 875-3 Table 6 for the actual roof angle and building h/w; truss to be braced in the plane of the roof and the bottom chord.")
-        return Result(model, thDeg, ll, pd, groups, purlin, pChecks, rb.build(), forces)
+        return Result(model, thDeg, ll, pd, groups, purlin, pChecks, rb.build(), forces, detail)
     }
 
     private fun figure(m: FrameModel, groups: List<Group>): ReportDoc.Block.Figure {

@@ -121,6 +121,7 @@ private fun tools(p: Phase): List<Tool> = when (p) {
     )
     Phase.WALL -> listOf(
         Tool("Retaining wall", "cantilever RCC · stability · stem / heel / toe", Routes.design("retaining_wall")),
+        Tool("Counterfort wall", "tall walls · continuous stem / heel · T-beam counterfort", Routes.design("counterfort_wall")),
         Tool("Load-bearing masonry wall", "IS 1905 slenderness, stress", Routes.design("wall_masonry")),
         Tool("RCC wall", "IS 456 Cl. 32", Routes.design("wall_rcc")),
         Tool("Compound wall", "wind, overturning, footing", Routes.design("wall_compound")),

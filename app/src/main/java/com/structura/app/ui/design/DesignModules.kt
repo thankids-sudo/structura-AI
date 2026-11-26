@@ -5,6 +5,8 @@ import com.structura.core.report.ReportDoc
 import com.structura.core.roof.ArchRoof
 import com.structura.core.roof.RoofTruss
 import com.structura.core.steel.SteelGrade
+import com.structura.core.drawing.DxfWriter
+import com.structura.core.walls.CounterfortWall
 import com.structura.core.walls.RetainingWall
 import com.structura.core.walls.Walls
 
@@ -13,6 +15,7 @@ class FieldSpec(val key: String, val label: String, val default: String, val opt
 
 class DesignModule(
     val id: String, val title: String, val codes: String, val fields: List<FieldSpec>,
+    val dxf: ((Map<String, String>) -> String)? = null,
     val run: (Map<String, String>) -> Pair<ReportDoc, FrameModel?>,
 )
 
@@ -21,6 +24,16 @@ object DesignModules {
     private fun Map<String, String>.d(k: String, def: Double) = this[k]?.replace(',', '.')?.toDoubleOrNull() ?: def
     private fun Map<String, String>.dn(k: String) = this[k]?.replace(',', '.')?.toDoubleOrNull()
     private val terrains = listOf("1", "2", "3", "4")
+
+    private fun truss(v: Map<String, String>) = RoofTruss.design(RoofTruss.Input(
+                type = RoofTruss.Type.entries.firstOrNull { it.label == v["type"] } ?: RoofTruss.Type.FINK,
+                span = v.d("span", 12.0), rise = v.d("rise", 3.0), panels = v.d("panels", 6.0).toInt(), spacing = v.d("spacing", 4.0),
+                purlinSpacing = v.d("purlin", 1.4), sheeting = v.d("sheeting", 0.15), services = v.d("services", 0.10), roofLive = v.dn("ll"),
+                vb = v.d("vb", 44.0), terrain = v.d("terrain", 2.0).toInt(), eavesHeight = v.d("eaves", 6.0),
+                cpeWindward = v.d("cpew", -0.8), cpeLeeward = v.d("cpel", -0.4), cpi = v.d("cpi", 0.2),
+                grade = if (v["grade"] == "E350") SteelGrade.E350 else SteelGrade.E250, bolts = v.d("bolts", 2.0).toInt(),
+                doubleAngles = v["members"] == "Double angle", gusset = v.d("gusset", 8.0), boltDia = v.d("boltDia", 16.0),
+            ))
 
     val all: List<DesignModule> = listOf(
         DesignModule("roof_truss", "Roof truss", "IS 800 · IS 875 Parts 1–3", listOf(
@@ -34,15 +47,10 @@ object DesignModules {
             FieldSpec("eaves", "Eaves height (m)", "6", group = "Wind"), FieldSpec("cpew", "Cpe windward", "-0.8", group = "Wind"),
             FieldSpec("cpel", "Cpe leeward", "-0.4", group = "Wind"), FieldSpec("cpi", "Cpi (±)", "0.2", group = "Wind"),
             FieldSpec("grade", "Steel", "E250", listOf("E250", "E350"), "Steel"), FieldSpec("bolts", "Bolts per end", "2", group = "Steel"),
-        )) { v ->
-            val r = RoofTruss.design(RoofTruss.Input(
-                type = RoofTruss.Type.entries.firstOrNull { it.label == v["type"] } ?: RoofTruss.Type.FINK,
-                span = v.d("span", 12.0), rise = v.d("rise", 3.0), panels = v.d("panels", 6.0).toInt(), spacing = v.d("spacing", 4.0),
-                purlinSpacing = v.d("purlin", 1.4), sheeting = v.d("sheeting", 0.15), services = v.d("services", 0.10), roofLive = v.dn("ll"),
-                vb = v.d("vb", 44.0), terrain = v.d("terrain", 2.0).toInt(), eavesHeight = v.d("eaves", 6.0),
-                cpeWindward = v.d("cpew", -0.8), cpeLeeward = v.d("cpel", -0.4), cpi = v.d("cpi", 0.2),
-                grade = if (v["grade"] == "E350") SteelGrade.E350 else SteelGrade.E250, bolts = v.d("bolts", 2.0).toInt(),
-            ))
+            FieldSpec("members", "Members", "Single angle", listOf("Single angle", "Double angle"), "Connections"),
+            FieldSpec("gusset", "Gusset thickness (mm)", "8", group = "Connections"), FieldSpec("boltDia", "Bolt φ (mm)", "16", listOf("12", "16", "20", "24"), "Connections"),
+        ), dxf = { v -> DxfWriter.write(truss(v).detail.drawing) }) { v ->
+            val r = truss(v)
             r.report to r.model
         },
         DesignModule("arch_roof", "Self-supported corrugated roof", "IS 801 · IS 800 · IS 875 Parts 2–3", listOf(
@@ -77,6 +85,19 @@ object DesignModules {
                 stemTop = v.d("stemTop", 0.2), stemBottom = v.d("stemBot", 0.0), baseThickness = v.d("base", 0.0), baseWidth = v.d("b", 0.0), toe = v.d("toe", 0.0),
                 autoSize = v.dn("b") == null))
             r.report to null
+        },
+        DesignModule("counterfort_wall", "Counterfort retaining wall", "IS 456:2000 Cl. 20, 26, 38, 40", listOf(
+            FieldSpec("h", "Height incl. base (m)", "8", group = "Geometry"), FieldSpec("l", "Counterfort spacing (m)", "3", group = "Geometry"),
+            FieldSpec("tc", "Counterfort thickness (m)", "0.4", group = "Geometry"), FieldSpec("stem", "Stem thickness (m)", "0.25", group = "Geometry"),
+            FieldSpec("base", "Base thickness (blank = auto)", "", group = "Geometry"), FieldSpec("b", "Base width (blank = auto-size)", "", group = "Geometry"),
+            FieldSpec("toe", "Toe (blank = B/4)", "", group = "Geometry"),
+            FieldSpec("gamma", "Soil γ (kN/m³)", "18", group = "Soil"), FieldSpec("phi", "φ (°)", "30", group = "Soil"),
+            FieldSpec("q", "Surcharge (kN/m²)", "10", group = "Soil"), FieldSpec("sbc", "SBC (kN/m²)", "200", group = "Soil"), FieldSpec("mu", "Base friction μ", "0.5", group = "Soil"),
+            FieldSpec("fck", "fck (MPa)", "25", group = "Materials"), FieldSpec("fy", "fy (MPa)", "500", group = "Materials"), FieldSpec("bar", "Bar φ (mm)", "16", group = "Materials"),
+        )) { v ->
+            CounterfortWall.design(CounterfortWall.Input(height = v.d("h", 8.0), spacing = v.d("l", 3.0), counterfort = v.d("tc", 0.4), stem = v.d("stem", 0.25),
+                base = v.d("base", 0.0), baseWidth = v.d("b", 0.0), toe = v.d("toe", 0.0), gammaSoil = v.d("gamma", 18.0), phi = v.d("phi", 30.0),
+                surcharge = v.d("q", 10.0), sbc = v.d("sbc", 200.0), mu = v.d("mu", 0.5), fck = v.d("fck", 25.0), fy = v.d("fy", 500.0), bar = v.d("bar", 16.0))).report to null
         },
         DesignModule("wall_masonry", "Load-bearing masonry wall", "IS 1905:1987", listOf(
             FieldSpec("h", "Storey height (m)", "3.0"), FieldSpec("t", "Thickness (mm)", "230"), FieldSpec("p", "Load at top (kN/m)", "60"),

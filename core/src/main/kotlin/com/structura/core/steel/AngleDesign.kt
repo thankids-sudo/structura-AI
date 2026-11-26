@@ -108,6 +108,58 @@ object AngleDesign {
         return SteelResult(cap, util, checks, steps)
     }
 
+    /**
+     * Two equal-leg angles back to back on both sides of a gusset [tg] (mm), connected leg [b], outstand [d]:
+     * tension = 2 × single-angle yielding / rupture / block shear (Cl. 6.2–6.4); compression as a built-up member,
+     * KL = 0.85·L (Cl. 7.5.2.1, ≥ 2 bolts), r about the in-plane axis (2·Ixx) and the out-of-plane axis
+     * (2·[Iyy + A(tg/2 + cx)²]), curve c; tack bolts so that each angle's slenderness between tacks ≤ min(40, 0.6·KL/r)
+     * (Cl. 7.8.1).
+     */
+    fun checkDouble(b: Double, d: Double, t: Double, tg: Double, g: SteelGrade, tension: Double, compression: Double, length: Double,
+                    bolts: Int = 2, holeDia: Double = 18.0, name: String = "2-ISA ${b.toInt()}×${d.toInt()}×${t.toInt()}", slenderLimit: Double = 180.0): SteelResult {
+        val single = check(b, d, t, g, tension / 2, 0.0, length, bolts, holeDia, true, name, slenderLimit = slenderLimit)
+        val p = props(d, b, t)                       // x along the outstand, y along the connected leg (against the gusset)
+        val a2 = 2 * p.area
+        val iIn = 2 * p.ixx                          // in-plane buckling (deflection along the connected leg)
+        val iOut = 2 * (p.iyy + p.area * (tg / 2 + p.cx) * (tg / 2 + p.cx))
+        val rIn = sqrt(iIn / a2); val rOut = sqrt(iOut / a2); val r = min(rIn, rOut)
+        val eps = sqrt(250.0 / g.fy)
+        val checks = ArrayList<DesignCheck>(); val steps = ArrayList<String>()
+        steps += String.format(java.util.Locale.US, "%s on a %.0f mm gusset: A = %.0f mm², r in-plane %.1f mm, r out-of-plane %.1f mm (single-angle rvv %.1f mm)",
+            name, tg, a2, rIn, rOut, p.rvv)
+        checks += single.checks.filter { it.item == "Angle classification" }
+        var util = 0.0; var cap = 0.0
+        if (tension > 0) {
+            val td = 2 * single.capacity
+            steps += String.format(java.util.Locale.US, "Tension: 2 × single-angle Td (yielding, rupture, block shear) = %.1f kN", td)
+            checks += DesignCheck("Tension (2 angles)", String.format(java.util.Locale.US, "T = %.1f kN", tension), String.format(java.util.Locale.US, "≤ Td = %.1f kN", td),
+                if (tension <= td) Status.PASS else Status.FAIL, "IS 800:2007 Cl. 6.2, 6.3.3, 6.4.1")
+            util = max(util, tension / td); cap = td
+        }
+        if (compression > 0) {
+            val kl = 0.85 * length
+            val lam = kl / r
+            val lamN = lam / (PI * sqrt(2.0e5 / g.fy))
+            val ph = 0.5 * (1 + 0.49 * (lamN - 0.2) + lamN * lamN)
+            val fcd = min((g.fy / IS800.GM0) / (ph + sqrt(ph * ph - lamN * lamN)), g.fy / IS800.GM0)
+            val pd = a2 * fcd / 1e3
+            steps += String.format(java.util.Locale.US, "Compression: KL = 0.85L = %.0f mm, KL/r = %.1f, λ = %.3f, curve c → fcd = %.1f MPa, Pd = %.1f kN (Cl. 7.1.2, 7.5.2.1)", kl, lam, lamN, fcd, pd)
+            checks += DesignCheck("Compression (2 angles)", String.format(java.util.Locale.US, "P = %.1f kN", compression), String.format(java.util.Locale.US, "≤ Pd = %.1f kN", pd),
+                if (compression <= pd) Status.PASS else Status.FAIL, "IS 800:2007 Cl. 7.5.2")
+            checks += DesignCheck("Slenderness", String.format(java.util.Locale.US, "KL/r = %.0f", lam), "≤ ${slenderLimit.toInt()}", if (lam <= slenderLimit) Status.PASS else Status.FAIL, "IS 800:2007 Table 3")
+            val sTack = p.rvv * min(40.0, 0.6 * lam)
+            val nTack = max(2, Math.ceil(length / sTack).toInt() - 1)
+            steps += String.format(java.util.Locale.US, "Tack bolts with %.0f mm packing: spacing ≤ rvv·min(40, 0.6·KL/r) = %.0f mm → at least %d tacks (Cl. 7.8.1)", tg, sTack, nTack)
+            checks += DesignCheck("Tack connectors", "≤ ${sTack.toInt()} mm c/c", "$nTack tacks, packing = gusset thickness", Status.INFO, "IS 800:2007 Cl. 7.8.1")
+            if (compression / pd >= util) cap = pd
+            util = max(util, compression / pd)
+        } else if (tension > 0) {
+            val sTack = 1000.0
+            checks += DesignCheck("Tack connectors", "≤ ${sTack.toInt()} mm c/c", "tension member", Status.INFO, "IS 800:2007 Cl. 10.2.5")
+        }
+        return SteelResult(cap, util, checks, steps)
+    }
+
     /** Angle from a FEM section of shape ANGLE (m → mm): (b, d, t). */
     fun dims(b: Double, h: Double, t: Double) = Triple(b * 1000, h * 1000, t * 1000)
 

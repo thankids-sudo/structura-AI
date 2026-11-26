@@ -1,6 +1,10 @@
 package com.structura.core.roof
 
 import com.structura.core.rcc.Status
+import com.structura.core.drawing.DxfWriter
+import com.structura.core.steel.AngleDesign
+import com.structura.core.steel.SteelGrade
+import com.structura.core.walls.CounterfortWall
 import com.structura.core.walls.RetainingWall
 import com.structura.core.walls.Walls
 import org.junit.Assert.assertEquals
@@ -77,5 +81,31 @@ class RoofWallsTest {
         assertTrue(rc.text().contains(String.format(java.util.Locale.US, "%.1f", puw)))
         val c = Walls.compound(Walls.Compound())
         assertTrue(c.text().contains("Overturning"))
+    }
+
+    @Test
+    fun doubleAngle_strongerThanSingle() {
+        val one = AngleDesign.check(65.0, 65.0, 6.0, SteelGrade.E250, 0.0, 60.0, 2.0, 2, 18.0, true, "ISA 65")
+        val two = AngleDesign.checkDouble(65.0, 65.0, 6.0, 8.0, SteelGrade.E250, 0.0, 60.0, 2.0)
+        assertTrue("double ${two.utilisation} < single ${one.utilisation}", two.utilisation < one.utilisation)
+    }
+
+    @Test
+    fun truss_doubleAngles_withDetailing() {
+        for (dbl in listOf(false, true)) {
+            val r = RoofTruss.design(RoofTruss.Input(type = RoofTruss.Type.PRATT, span = 15.0, rise = 3.0, doubleAngles = dbl))
+            assertTrue(r.detail.ends.isNotEmpty() && r.detail.ends.all { it.bolts >= 2 })
+            assertEquals(r.model.nodes.size, r.detail.joints.size)
+            val dxf = DxfWriter.write(r.detail.drawing)
+            assertTrue(dxf.contains("S-BOLT") && dxf.contains("EOF"))
+            println("truss double=$dbl bolts=${r.detail.ends.sumOf { it.bolts }} safe=${r.report.isSafe}")
+        }
+    }
+
+    @Test
+    fun counterfortWall_stable() {
+        val r = CounterfortWall.design(CounterfortWall.Input(height = 8.0))
+        r.checks.take(3).forEach { assertEquals(it.item, Status.PASS, it.status) }
+        println("counterfort B=${r.b} " + r.checks.joinToString { it.item + ":" + it.status })
     }
 }

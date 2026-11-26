@@ -72,5 +72,5 @@ Each step is built, tested and committed separately.
 - [x] 6.4 Walls: masonry (IS 1905), RCC (IS 456 Cl. 32), compound wall
 - [x] 6.5 Cantilever retaining wall
 - [x] 6.6 PDF reports (design modules and frame analysis)
-- [ ] 6.7 Counterfort retaining wall; double-angle truss members; gusset / bolt detailing drawings
+- [x] 6.7 Counterfort retaining wall (continuous stem/heel slabs, T-beam counterfort, ties); double-angle truss members (IS 800 Cl. 7.5.2, tack spacing Cl. 7.8.1); gusset / bolt joint sketches in the PDF and a DXF detail drawing
 

@@ -41,7 +41,7 @@ object RetainingWall {
 
     fun ka(phi: Double) = (1 - sin(phi * PI / 180)) / (1 + sin(phi * PI / 180))
 
-    private fun stability(inp: Input, b: Double, toe: Double, d: Double, tb: Double): Stability {
+    internal fun stability(inp: Input, b: Double, toe: Double, d: Double, tb: Double, extraW: Double = 0.0, extraX: Double = 0.0): Stability {
         val h = inp.height; val ka = ka(inp.phi); val hs = h - d
         val pa = 0.5 * ka * inp.gammaSoil * h * h; val ps = ka * inp.surcharge * h
         val heel = b - toe - tb
@@ -51,6 +51,7 @@ object RetainingWall {
             25 * 0.5 * (tb - inp.stemTop) * hs to toe + inp.stemTop + (tb - inp.stemTop) / 3,
             25 * b * d to b / 2,
             inp.gammaSoil * heel * hs to toe + tb + heel / 2,
+            extraW to extraX,
         )
         val w = parts.sumOf { it.first }; val mr = parts.sumOf { it.first * it.second }
         val moE = pa * h / 3; val moS = ps * h / 2
