@@ -181,18 +181,50 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
     var undo by remember { mutableStateOf(listOf<FrameModel>()) }
     var redo by remember { mutableStateOf(listOf<FrameModel>()) }
     var autoRun by remember { mutableStateOf(true) }
+    var sel by remember { mutableStateOf(com.structura.core.fem.ModelOps.Sel()) }
+    var op by remember { mutableStateOf<EditOp?>(null) }
+    // whole-model design (RCC beams / columns + IS 800 steel), shown on the members and in a list
+    var design by remember(model) { mutableStateOf<Map<Int, Triple<Double, Boolean, String>>?>(null) }
+    var rccDesign by remember(model) { mutableStateOf<List<com.structura.core.fem.RccModelDesign.MemberDesign>>(emptyList()) }
+    var showDesign by remember { mutableStateOf(false) }
     fun commit(m: FrameModel, msg: String) {
         undo = (undo + model).takeLast(60); redo = emptyList()
         DesignSession.currentModel = m
         com.structura.app.project.ProjectStore.save(context)
         status = msg
+        sel = com.structura.core.fem.ModelOps.Sel(sel.nodes.filter { id -> m.nodes.any { it.id == id } }.toSet(), sel.members.filter { id -> m.members.any { it.id == id } }.toSet())
+    }
+    fun runDesign(only: Set<Int>? = null) {
+        busy = true
+        scope.launch {
+            try {
+                val res = ensureResults()
+                val (rcc, steel) = withContext(Dispatchers.Default) { com.structura.core.fem.RccModelDesign.design(model, res) to SteelModelCheck.check(model, res) }
+                rccDesign = rcc
+                val map = HashMap<Int, Triple<Double, Boolean, String>>()
+                rcc.forEach { map[it.member] = Triple(it.utilisation, it.ok, it.summary) }
+                steel.forEach { c -> map[c.member] = Triple(c.utilisation, c.ok, "Steel ${c.section} ${c.grade}: η ${"%.2f".format(c.utilisation)} (${c.combination}) ${if (c.ok) "✔" else "✘"}") }
+                design = if (only != null) map.filterKeys { it in only } else map
+                util = design!!.mapValues { it.value.first }
+                view = ResultView.MODEL
+                val bad = design!!.values.count { !it.second }
+                status = "Design: ${rcc.count { it.kind == "Beam" }} RCC beams, ${rcc.count { it.kind == "Column" }} columns, ${steel.size} steel — " + if (bad == 0) "all ✔" else "$bad ✘"
+                showDesign = true
+            } catch (e: Exception) { status = "Design: ${e.message}" } finally { busy = false }
+        }
     }
     fun onDrawTap(t: com.structura.app.ui.fem.TapInfo) {
         val E = com.structura.core.fem.ModelEditor
         val proto = model.members.lastOrNull()
         when (tool) {
-            DrawTool.SELECT -> { selNode = t.node; selMember = if (t.node == null) t.member else null
-                status = t.node?.let { id -> val n = model.node(id); "N$id (${"%.2f".format(n.x)}, ${"%.2f".format(n.y)}, ${"%.2f".format(n.z)}) m · ${E.supportType(model, id).name.lowercase()}" }
+            DrawTool.SELECT -> {
+                sel = when {
+                    t.node != null -> sel.copy(nodes = if (t.node in sel.nodes) sel.nodes - t.node else sel.nodes + t.node)
+                    t.member != null -> sel.copy(members = if (t.member in sel.members) sel.members - t.member else sel.members + t.member)
+                    else -> sel
+                }
+                selNode = null; selMember = null
+                status = t.member?.let { id -> design?.get(id)?.third }?.let { "M${t.member} · $it" } ?: t.node?.let { id -> val n = model.node(id); "N$id (${"%.2f".format(n.x)}, ${"%.2f".format(n.y)}, ${"%.2f".format(n.z)}) m · ${E.supportType(model, id).name.lowercase()}" }
                     ?: t.member?.let { id -> val m = model.members.first { it.id == id }; "M$id N${m.i}→N${m.j} · ${m.section.name} · ${"%.2f".format((model.node(m.j).pos - model.node(m.i).pos).length)} m" } ?: "Nothing selected" }
             DrawTool.NODE -> t.planePoint?.let { p -> val (m, id) = E.addNode(model, p); if (m !== model) commit(m, "Node N$id") } ?: run { status = "Rotate the view — the work plane is edge-on" }
             DrawTool.MEMBER -> {
@@ -315,18 +347,19 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
             val showResults = !draw && view != ResultView.MODEL
             FrameView3D(
                 model, if (showResults) shown?.second else null, if (showResults) view else ResultView.MODEL, Modifier.fillMaxSize(), animate = true, camera = camera,
-                memberUtil = if (!showResults && !draw) util else null, dark = true, loadCase = if (draw) null else caseSel, reveal = if (draw) 1f else reveal.value,
+                memberUtil = if (!showResults) util else null, dark = true, loadCase = if (draw) null else caseSel, reveal = if (draw) 1f else reveal.value,
                 doubleTapFit = !draw, onTouch = { spin = false; hint = false },
                 workPlane = if (draw) com.structura.app.ui.fem.WorkPlane(plane, 0.0, snap, visible = true) else null,
                 onTap = if (draw) ({ t -> onDrawTap(t) }) else null,
                 selectedNode = if (draw) selNode else null, selectedMember = if (draw) selMember else null, pendingNode = if (draw) pending else null,
+                selectedNodes = if (draw) sel.nodes else emptySet(), selectedMembers = if (draw) sel.members else emptySet(),
             )
             Row(Modifier.align(Alignment.TopCenter).padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Pill("◇ 3D", true) { camera.iso() }
                 Pill("XY", false) { camera.top() }
                 Pill("XZ", false) { camera.front() }
                 Pill("YZ", false) { camera.right() }
-                if (draw) Pill("✓ Done", true) { draw = false; pending = null; selNode = null; selMember = null; camera.iso() }
+                if (draw) Pill("✓ Done", true) { draw = false; pending = null; selNode = null; selMember = null; sel = com.structura.core.fem.ModelOps.Sel(); camera.iso() }
             }
             if (!draw) Column(Modifier.align(Alignment.CenterStart).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("DESIGN", color = Muted, fontSize = 10.sp)
@@ -359,6 +392,31 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
             if (draw) Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Bar.copy(alpha = 0.92f)).padding(vertical = 6.dp)) {
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     DrawTool.entries.forEach { t -> Pill(t.label, tool == t) { tool = t; pending = null } }
+                }
+                if (tool == DrawTool.SELECT) {
+                    val O = com.structura.core.fem.ModelOps
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("${sel.members.size} M · ${sel.nodes.size} N", color = Orange, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                        Pill("All", false) { sel = O.all(model) }
+                        Pill("None", false) { sel = O.Sel() }
+                        Pill("Invert", false) { sel = O.invert(model, sel) }
+                        Pill("Columns", false) { sel = sel.copy(members = sel.members + O.columns(model)) }
+                        Pill("Beams", false) { sel = sel.copy(members = sel.members + O.beams(model)) }
+                        Pill("Braces", false) { sel = sel.copy(members = sel.members + O.braces(model)) }
+                        Pill("Supports", false) { sel = sel.copy(nodes = sel.nodes + model.supports.map { it.node }) }
+                        Pill("Same level", false) {
+                            val z = (sel.nodes.firstOrNull() ?: sel.members.firstOrNull()?.let { id -> model.members.first { it.id == id }.i })?.let { model.node(it).z }
+                            if (z == null) status = "Select a node or beam first" else { val l = O.atLevel(model, z); sel = O.Sel(sel.nodes + l.nodes, sel.members + l.members) }
+                        }
+                        Pill("Similar", false) { sel.members.firstOrNull()?.let { sel = sel.copy(members = sel.members + O.similar(model, it)) } ?: run { status = "Select a member first" } }
+                    }
+                    if (!sel.isEmpty) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        EditOp.entries.forEach { o -> Pill(o.label, false) {
+                            if (o == EditOp.DELETE) commit(O.delete(model, sel), "${sel.count} item(s) deleted").also { sel = O.Sel() }
+                            else if (o == EditOp.DESIGN) runDesign(sel.members)
+                            else op = o
+                        } }
+                    }
                 }
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Pill("↶", false) { undo.lastOrNull()?.let { prev -> redo = redo + model; undo = undo.dropLast(1); DesignSession.currentModel = prev; com.structura.app.project.ProjectStore.save(context); status = "Undo" } }
@@ -397,7 +455,7 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
                         }
                     }
                 }
-                Pill("✎ Draw", false) { draw = true; spin = false; hint = false; camera.front(); plane = com.structura.app.ui.fem.Plane.XZ; status = "Draw: pick a tool, tap the grid" }
+                Pill("✎ Edit", false) { draw = true; spin = false; hint = false; camera.front(); plane = com.structura.app.ui.fem.Plane.XZ; status = "Draw: pick a tool, tap the grid" }
                 Pill("⤢ Fit", false) { camera.fit() }
                 Pill(if (spin) "⏸ Spin" else "⟳ Spin", spin) { spin = !spin }
             }
@@ -412,7 +470,7 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
         Row(Modifier.fillMaxWidth().background(Bar).padding(horizontal = 12.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Action("Analyse", primary = true, Modifier.weight(1f), icon = { c -> PlayIcon(c) }) { if (!busy) analyse() }
             Action("AI review", primary = false, Modifier.weight(1f), icon = { c -> SparkIcon(c) }) { if (!busy) aiReview() }
-            Action("Design", primary = false, Modifier.weight(1f), icon = { c -> BarsIcon(c) }) { sheet = Phase.RCC }
+            Action("Design", primary = false, Modifier.weight(1f), icon = { c -> BarsIcon(c) }) { if (!busy) runDesign() }
             Action("Report", primary = false, Modifier.weight(1f), icon = { c -> DocIcon(c) }) { if (!busy) report() }
         }
     }
@@ -442,6 +500,40 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
                         Text("›", color = Cyan, fontSize = 20.sp)
                     }
                     Spacer(Modifier.height(6.dp))
+                }
+            }
+        }
+    }
+
+    op?.let { o ->
+        EditOpDialog(o, model, sel, onDismiss = { op = null }) { m2, newSel, msg -> commit(m2, msg); newSel?.let { sel = it }; op = null }
+    }
+
+    if (showDesign) design?.let { dm ->
+        ModalBottomSheet(onDismissRequest = { showDesign = false }, containerColor = Panel) {
+            Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Member design — IS 456 / IS 800", color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                Text("Members are coloured by utilisation in the main space. Tap a row to select it there; beams open in the beam designer with their forces.", color = Muted, fontSize = 12.sp)
+                if (dm.isEmpty()) Text("No designable members: RCC needs a rectangular section with an M-grade concrete; steel needs an IS 808 / hollow section.", color = Orange, fontSize = 13.sp)
+                dm.entries.sortedByDescending { it.value.first }.forEach { (id, v) ->
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).border(BorderStroke(1.dp, Line), RoundedCornerShape(10.dp))
+                        .clickable { draw = true; tool = DrawTool.SELECT; sel = com.structura.core.fem.ModelOps.Sel(members = setOf(id)); showDesign = false; status = "M$id · ${v.third}" }
+                        .padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("M$id", color = if (v.second) Green else Color(0xFFEF6B5B), fontFamily = FontFamily.Monospace, fontSize = 13.sp, modifier = Modifier.width(48.dp))
+                        Text(v.third, color = Ink, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                        rccDesign.firstOrNull { it.member == id && it.kind == "Beam" }?.let { b ->
+                            Pill("Beam ›", false) {
+                                DesignSession.prefill = DesignSession.Prefill(b.b, b.d, b.span, b.mu, b.vu)
+                                showDesign = false; onOpen(Routes.RCC_BEAM)
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Pill("RCC tools", false) { showDesign = false; sheet = Phase.RCC }
+                    Pill("Steel tools", false) { showDesign = false; sheet = Phase.STEEL }
+                    Pill("Roof / walls", false) { showDesign = false; sheet = Phase.ROOF }
                 }
             }
         }
@@ -561,7 +653,7 @@ private fun DocIcon(c: Color) = Canvas(Modifier.size(18.dp)) {
 
 /** Drawing tools available directly in the Workbench space. */
 enum class DrawTool(val label: String, val hint: String) {
-    SELECT("Select", "tap a node or member for its data"),
+    SELECT("Select", "tap nodes / members to select; then Move, Copy, Mirror …"),
     NODE("Node", "tap the grid to place a node"),
     MEMBER("Member", "tap start, then end; tap the last node again to stop"),
     SPLIT("½ Split", "tap a member to split it"),
@@ -570,4 +662,97 @@ enum class DrawTool(val label: String, val hint: String) {
     LOAD("Load", "tap a node: vertical load (− = down)"),
     UDL("UDL", "tap a member: uniform load (− = down)"),
     DELETE("Delete", "tap a node or member to delete"),
+}
+
+
+/** Operations on the Workbench selection. */
+enum class EditOp(val label: String) {
+    MOVE("⇄ Move"), COPY("⧉ Copy"), MIRROR("⇋ Mirror"), ROTATE("⟲ Rotate"), DELETE("🗑 Delete"), SECTION("▭ Section"),
+    RELEASE("◦ Releases"), SUPPORT("▲ Support"), LOAD("↓ Load"), SPLIT("⫶ Divide"), DESIGN("Design ✔")
+}
+
+@Composable
+private fun EditOpDialog(
+    o: EditOp, model: FrameModel, sel: com.structura.core.fem.ModelOps.Sel, onDismiss: () -> Unit,
+    onApply: (FrameModel, com.structura.core.fem.ModelOps.Sel?, String) -> Unit,
+) {
+    val O = com.structura.core.fem.ModelOps
+    val E = com.structura.core.fem.ModelEditor
+    val u = com.structura.app.Units
+    val c = remember(sel) { O.centroid(model, sel) }
+    var a by remember { mutableStateOf("0") }; var b by remember { mutableStateOf("0") }; var cc by remember { mutableStateOf("0") }
+    var n by remember { mutableStateOf("1") }
+    var axis by remember { mutableStateOf('X') }
+    var keep by remember { mutableStateOf(true) }
+    var at by remember(o) { mutableStateOf("%.3f".format(c.x / u.len)) }
+    var cx by remember(o) { mutableStateOf("%.3f".format(c.x / u.len)) }; var cy by remember(o) { mutableStateOf("%.3f".format(c.y / u.len)) }
+    var hI by remember { mutableStateOf(false) }; var hJ by remember { mutableStateOf(false) }; var truss by remember { mutableStateOf(false) }
+    var sup by remember { mutableStateOf(com.structura.core.fem.ModelEditor.SupportType.FIXED) }
+    var loadCase by remember { mutableStateOf("DL") }
+    val spec = remember { com.structura.app.ui.studio.SectionSpec() }
+    fun d(s: String) = s.replace(',', '.').toDoubleOrNull() ?: 0.0
+    val lu = if (u.imperial) "ft" else "m"
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("${o.label} — ${sel.members.size} members, ${sel.nodes.size} nodes") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                @Composable fun num(label: String, v: String, set: (String) -> Unit) = androidx.compose.material3.OutlinedTextField(v, set, label = { Text(label) }, singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                when (o) {
+                    EditOp.MOVE, EditOp.COPY -> {
+                        num("ΔX ($lu)", a) { a = it }; num("ΔY ($lu)", b) { b = it }; num("ΔZ ($lu)", cc) { cc = it }
+                        if (o == EditOp.COPY) { num("Number of copies", n) { n = it }; Text("Each copy is offset by Δ from the previous one (translational repeat); loads and supports are copied and coincident nodes merged.", fontSize = 12.sp) }
+                    }
+                    EditOp.MIRROR -> {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf('X', 'Y', 'Z').forEach { ax -> androidx.compose.material3.FilterChip(axis == ax, { axis = ax; at = "%.3f".format((when (ax) { 'X' -> c.x; 'Y' -> c.y; else -> c.z }) / u.len) }, { Text("about $ax =") }) } }
+                        num("Plane position ($lu)", at) { at = it }
+                        Row(verticalAlignment = Alignment.CenterVertically) { androidx.compose.material3.Switch(keep, { keep = it }); Text("  keep original (copy)") }
+                    }
+                    EditOp.ROTATE -> {
+                        num("Angle (°, anticlockwise from above)", a) { a = it }; num("Centre X ($lu)", cx) { cx = it }; num("Centre Y ($lu)", cy) { cy = it }
+                        Row(verticalAlignment = Alignment.CenterVertically) { androidx.compose.material3.Switch(keep, { keep = it }); Text("  copy (polar repeat)") }
+                        if (keep) num("Number of copies", n) { n = it }
+                    }
+                    EditOp.SECTION -> { com.structura.app.ui.studio.SectionPicker(spec); Text("Applied to the ${sel.members.size} selected members.", fontSize = 12.sp) }
+                    EditOp.RELEASE -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) { androidx.compose.material3.Switch(hI, { hI = it }); Text("  moment hinge at i") }
+                        Row(verticalAlignment = Alignment.CenterVertically) { androidx.compose.material3.Switch(hJ, { hJ = it }); Text("  moment hinge at j") }
+                        Row(verticalAlignment = Alignment.CenterVertically) { androidx.compose.material3.Switch(truss, { truss = it }); Text("  truss member (axial only)") }
+                    }
+                    EditOp.SUPPORT -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        com.structura.core.fem.ModelEditor.SupportType.entries.forEach { t -> androidx.compose.material3.FilterChip(sup == t, { sup = t }, { Text(t.name.lowercase().replace('_', ' ')) }) }
+                    }
+                    EditOp.LOAD -> {
+                        Text(if (sel.members.isNotEmpty()) "UDL on members, kN/m (global Z, − = down)" else "Nodal load, kN (global axes)", fontSize = 12.sp)
+                        if (sel.members.isNotEmpty()) num("w", cc) { cc = it } else { num("Fx", a) { a = it }; num("Fy", b) { b = it }; num("Fz", cc) { cc = it } }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("DL", "LL", "WL").forEach { k -> androidx.compose.material3.FilterChip(loadCase == k, { loadCase = k }, { Text(k) }) } }
+                    }
+                    EditOp.SPLIT -> num("Divide each member into n parts", n) { n = it }
+                    else -> {}
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                runCatching {
+                    val L = u.len
+                    when (o) {
+                        EditOp.MOVE -> onApply(O.move(model, sel, com.structura.core.fem.Vec3(d(a) * L, d(b) * L, d(cc) * L)), null, "Moved ${sel.count} item(s)")
+                        EditOp.COPY -> { val (m, s) = O.copy(model, sel, com.structura.core.fem.Vec3(d(a) * L, d(b) * L, d(cc) * L), d(n).toInt().coerceAtLeast(1)); onApply(m, s, "${d(n).toInt()} cop(ies) made") }
+                        EditOp.MIRROR -> { val (m, s) = O.mirror(model, sel, axis, d(at) * L, keep); onApply(m, s, "Mirrored about $axis = ${at}") }
+                        EditOp.ROTATE -> { val (m, s) = O.rotate(model, sel, d(a), d(cx) * L, d(cy) * L, keep, d(n).toInt().coerceAtLeast(1)); onApply(m, s, "Rotated ${a}°") }
+                        EditOp.SECTION -> onApply(O.setSection(model, sel.members, spec.section(), spec.material()), null, "Section ${spec.section().name} on ${sel.members.size} members")
+                        EditOp.RELEASE -> onApply(O.setReleases(model, sel.members, hI, hJ, truss), null, "Releases set on ${sel.members.size} members")
+                        EditOp.SUPPORT -> onApply(O.setSupports(model, sel.nodes, sup), null, "${sup.name.lowercase()} supports at ${sel.nodes.size} nodes")
+                        EditOp.LOAD -> if (sel.members.isNotEmpty()) onApply(O.addUdls(model, sel.members, d(cc) * u.udl, loadCase), null, "$loadCase UDL on ${sel.members.size} members")
+                            else onApply(O.addNodalLoads(model, sel.nodes, com.structura.core.fem.Vec3(d(a) * u.force, d(b) * u.force, d(cc) * u.force), loadCase), null, "$loadCase load at ${sel.nodes.size} nodes")
+                        EditOp.SPLIT -> onApply(O.subdivide(model, sel.members, d(n).toInt().coerceIn(2, 20)), com.structura.core.fem.ModelOps.Sel(), "Divided into ${d(n).toInt()} parts")
+                        else -> onDismiss()
+                    }
+                }.onFailure { onApply(model, null, "Not applied: ${it.message}") }
+            }) { Text("Apply") }
+        },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }

@@ -133,8 +133,18 @@ fun DesignModuleScreen(id: String, onBack: () -> Unit, onStudio: () -> Unit) {
                         OutlinedButton(onClick = { com.structura.app.shareTextFile(context, "${module.id}.dxf", "application/dxf", d, module.title + " — detail drawing") }, modifier = Modifier.weight(1f)) { Text("↓ DXF") }
                     }
                     model?.let { m ->
-                        OutlinedButton(onClick = { DesignSession.studioModel = m; onStudio() }, modifier = Modifier.weight(1f)) { Text("◇ Open in 3D Studio") }
+                        OutlinedButton(onClick = { DesignSession.studioModel = m; onStudio() }, modifier = Modifier.weight(1f)) { Text("◇ 3D Studio") }
                     }
+                }
+                model?.let { m ->
+                    OutlinedButton(onClick = {
+                        val base = DesignSession.currentModel ?: com.structura.core.fem.ModelEditor.empty("Structura AI project")
+                        val dx = if (base.nodes.isEmpty()) 0.0 else base.nodes.maxOf { it.x } + 3.0
+                        val (joined, _) = com.structura.core.fem.ModelOps.append(base, m, com.structura.core.fem.Vec3(dx, 0.0, 0.0))
+                        DesignSession.currentModel = joined
+                        ProjectStore.save(context)
+                        android.widget.Toast.makeText(context, "Added to the project at X = ${"%.1f".format(dx)} m — edit it in the main space", android.widget.Toast.LENGTH_LONG).show()
+                    }, modifier = Modifier.fillMaxWidth()) { Text("⤓ Add to project (main space)") }
                 }
                 scene?.let { sc ->
                     com.structura.app.ui.viz.SceneCard(sc, Modifier.fillMaxWidth().height(460.dp))

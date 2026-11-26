@@ -233,6 +233,9 @@ fun FrameView3D(
     onTouch: (() -> Unit)? = null,
     /** Two-finger gestures pan as well as zoom; one finger always rotates. */
     twoFingerPan: Boolean = true,
+    /** Multi-selection (Workbench edit mode). */
+    selectedNodes: Set<Int> = emptySet(),
+    selectedMembers: Set<Int> = emptySet(),
 ) {
     viewDark = dark
     val touchCallback by rememberUpdatedState(onTouch)
@@ -333,7 +336,7 @@ fun FrameView3D(
             val shownIds = order?.take(kotlin.math.ceil(reveal * order.size).toInt())?.map { it.id }?.toHashSet()
             for (m in model.members) {
                 if (shownIds != null && m.id !in shownIds) continue
-                val sel = m.id == selectedMember
+                val sel = m.id == selectedMember || m.id in selectedMembers
                 val u = if (!faded) memberUtil?.get(m.id) else null
                 drawLine(
                     if (sel) Color(0xFFFFA000) else if (u != null) (if (u > 1.0) Color(0xFFD50000) else heat(u.toFloat())) else if (faded) ink.copy(alpha = 0.25f) else ink,
@@ -352,7 +355,7 @@ fun FrameView3D(
             for (n in model.nodes) {
                 if (shownIds != null && model.members.none { (it.i == n.id || it.j == n.id) && it.id in shownIds }) continue
                 val p = pj.screen(n.pos)
-                if (n.id == selectedNode || n.id == pendingNode || n.id in pendingNodes) drawCircle(Color(0xFFFFA000), 16f, p, style = Stroke(4f))
+                if (n.id == selectedNode || n.id == pendingNode || n.id in pendingNodes || n.id in selectedNodes) drawCircle(Color(0xFFFFA000), 16f, p, style = Stroke(4f))
                 drawCircle(ink, 4.5f, p)
             }
             if (reveal >= 1f && loadCase != "" && view == ResultView.MODEL) loads(pj, model, loadColor, loadCase)
