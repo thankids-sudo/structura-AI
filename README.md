@@ -158,6 +158,17 @@ Superstructure only (no foundations, masonry, finishes); steel by allowance unti
 ## Home — Workbench (UCS space)
 `ui/home/WorkbenchHome.kt` (design option C, canvas "Structura AI — UCS hub home screen options"). The project currently open (`DesignSession.currentModel`, kept in step with 3D Studio; a 3-storey sample at first start) is drawn live in a dark UCS space with view presets 3D / XY / XZ / YZ. Phases are docked around it: **Design** rail (01 RCC, 02 Steel) on the left, **Model** rail (03 FEM, 04 Plan, 05 STAAD) on the right; each opens a sheet of its tools. The bottom bar runs **Analyse** (all IS 456 / IS 1893 combinations, static check, IS 800 η colouring of steel members), **AI review**, **Design** and **Report** (HTML) on the model in place; the status strip shows the residuals and the AI verdict. Units chip switches m·kN / ft·kip.
 
+## Projects
+App start → **Projects** (`app/project/`): create a project (name, client / department, location, engineer; start from empty, portal frame, 3-storey building or roof-truss shed) or open / continue / delete a saved one. Each project is one JSON in the app's files (`files/projects/<id>.json`) with its 3D model and the last inputs of every design module; it autosaves on every Studio change and design run. Tap the project name on the Workbench to switch.
+
+## Roof and wall design (Workbench → Roof / Walls rails)
+One generic screen (`ui/design/DesignModuleScreen.kt`, modules in `DesignModules.kt`) runs each engine, shows the report on screen and exports it as an **A4 PDF** (`report/PdfExport.kt`: B&W serif, project header, numbered footer, bordered tables, check sheet with clauses, line-drawn figures).
+- **Roof truss** (`core/roof/RoofTruss.kt`): Fink, Pratt, Howe, Fan; IS 875-1 sheeting/services, IS 875-2 roof live load 0.75 − 0.02(θ − 10) ≥ 0.4, IS 875-3 wind normal to the slopes (Cpe windward / leeward, Cpi); pin-jointed FEM for 1.5(DL+LL), 1.5(DL+WL), 0.9DL+1.5WL, 1.2(DL+LL+WL) (IS 800 Table 4); lightest ISA per group (top chord, bottom chord, web struts, web ties) by tension / block shear / single-angle compression, slenderness 180 / 250 / 350 by force type (Table 3); ISMC purlins (biaxial, uplift LTB, shear, span/180). Opens in 3D Studio.
+- **Self-supported corrugated roof** (`core/roof/ArchRoof.kt`): custom trapezoidal profile (depth, pitch, crest, trough, t) → thin-wall properties per metre, Winter effective width (IS 801); circular two-pinned arch, full and half-span live load (0.75 − 0.52(h/l)²), wind by thirds; elastic in-plane buckling λcr and amplification 1/(1 − 1/λcr); N/Aeff + M/Zeff ≤ fy/γm0; thrust for ties; deflection span/180.
+- **Retaining wall** (`core/walls/RetainingWall.kt`): Rankine Ka with surcharge; IS 456 Cl. 20.1 (0.9Mr ≥ 1.2Mo,earth + 1.4Mo,surcharge) and Cl. 20.2 (0.9μW ≥ 1.4H); middle third and SBC; base auto-sized; stem, heel and toe flexure and shear, distribution steel.
+- **Walls** (`core/walls/Walls.kt`): load-bearing masonry (IS 1905: hef by restraint, SR ≤ 27, ks Table 9, ka, kp, fb from Table 8 entered by the user), RCC wall (IS 456 Cl. 32.2.5 Puw = 0.3(t − 1.2e − 2ea)fck, minimum steel Cl. 32.5), compound wall (wind, masonry tension at base, overturning, sliding, base pressure).
+- Workbench **Report** now exports the frame analysis as PDF (model sketch, static check, reactions, envelope, IS 800 checks, AI review).
+
 ## FEM analysis (RFEM-style 3D frame)
 
 - 6 DOF per node, Euler–Bernoulli members, rigid joints, linear static, direct stiffness method, Cholesky solver.

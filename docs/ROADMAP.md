@@ -64,3 +64,13 @@ Each step is built, tested and committed separately.
 - [x] 5.12 Warping continuity across joints: 7th (warping) DOF at nodes where member ends are marked "continuous", exact Vlasov [φ, θ] member matrix (split cantilever = single-member closed form to 1e-15)
 - [x] 5.13 Imperial input in the Studio editors (ft, kip, kip/ft, psf; node inspector in in / kip / kip·ft), stored in SI
 - [x] 5.14 Block shear for angles, IS 800 Cl. 6.4.1 (one bolt line)
+
+## Phase 6 — Projects, roofs, walls, PDF
+- [x] 6.1 Project start screen: new / open / continue / delete; autosave of model and design inputs
+- [x] 6.2 Roof truss analysis and design (Fink, Pratt, Howe, Fan; angles; purlins)
+- [x] 6.3 Self-supported corrugated arch roof with custom profile
+- [x] 6.4 Walls: masonry (IS 1905), RCC (IS 456 Cl. 32), compound wall
+- [x] 6.5 Cantilever retaining wall
+- [x] 6.6 PDF reports (design modules and frame analysis)
+- [ ] 6.7 Counterfort retaining wall; double-angle truss members; gusset / bolt detailing drawings
+
