@@ -115,6 +115,23 @@ class RoofWallsTest {
     }
 
     @Test
+    fun scenes_builtForEveryModule() {
+        val rw = RetainingWall.design(RetainingWall.Input(height = 4.0)).scene!!
+        assertTrue(rw.stages.size >= 6 && rw.items.count { it is com.structura.core.viz.Scene3D.Bar } > 20)
+        val cf = CounterfortWall.design(CounterfortWall.Input(height = 8.0)).scene!!
+        assertTrue(cf.items.any { it is com.structura.core.viz.Scene3D.Prism && it.y1 - it.y0 < 1.0 })     // counterfort plates
+        val tr = RoofTruss.design(RoofTruss.Input())
+        val ts = com.structura.core.viz.RoofScenes.truss(tr.model, 4.0, 1.4, 6.0, emptyMap(), gravity = 1.0, uplift = 1.0)
+        assertTrue(ts.items.count { it is com.structura.core.viz.Scene3D.Bar } >= 4 * tr.model.members.size)
+        val ar = ArchRoof.design(ArchRoof.Input())
+        val asc = com.structura.core.viz.RoofScenes.arch(ar.model, 6.0, 0.2, 0.06, 4.0, 1.0, "p")
+        assertTrue(asc.items.count { it is com.structura.core.viz.Scene3D.Face } == ar.model.nodes.size - 1)
+        val (lo, hi) = rw.bounds
+        assertTrue(hi.z > 4.0 && lo.z < 0.0)
+        println("scenes: rw ${rw.items.size}, cf ${cf.items.size}, truss ${ts.items.size}, arch ${asc.items.size}")
+    }
+
+    @Test
     fun counterfortWall_stable() {
         val r = CounterfortWall.design(CounterfortWall.Input(height = 8.0))
         r.checks.forEach { assertEquals(it.item, Status.PASS, it.status) }

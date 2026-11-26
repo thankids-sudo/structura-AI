@@ -33,7 +33,7 @@ object CounterfortWall {
         val fck: Double = 25.0, val fy: Double = 500.0, val cover: Double = 50.0, val bar: Double = 16.0,
     )
 
-    class Result(val b: Double, val checks: List<DesignCheck>, val report: ReportDoc)
+    class Result(val b: Double, val checks: List<DesignCheck>, val report: ReportDoc, val scene: com.structura.core.viz.Scene3D? = null)
 
     fun design(input: Input): Result {
         val h = input.height
@@ -79,10 +79,12 @@ object CounterfortWall {
         checks += DesignCheck("Base pressure", "qmax ${f1(s.qmax)}, qmin ${f1(s.qmin)} kN/m²", "≤ ${f0(inp.sbc)}, ≥ 0; e = ${f3(s.e)} ≤ B/6", if (s.qmax <= inp.sbc && s.qmin >= 0 && abs(s.e) <= s.b / 6) Status.PASS else Status.FAIL, IS456.ref("Cl. 34.1"))
 
         val aBar = PI * inp.bar * inp.bar / 4
+        val spacings = HashMap<String, Double>()
         fun slab(name: String, mu: Double, thk: Double, face: String): String {
             val dd = thk * 1000 - inp.cover - inp.bar / 2
             val ast = max(SlabDesigner.astFor(mu, dd, inp.fck, inp.fy), 0.0012 * 1000 * thk * 1000)
             val sp = min(300.0, floor(1000 * aBar / ast / 10) * 10)
+            spacings[name] = sp / 1000
             steps += "$name: Mu = ${f2(mu)} kN·m/m, d = ${f0(dd)} → Ast ${f0(ast)} mm²/m → φ${f0(inp.bar)} @ ${f0(sp)} ($face)"
             checks += DesignCheck("$name", "Ast ${f0(ast)} mm²/m", "φ${f0(inp.bar)} @ ${f0(sp)} c/c", Status.PASS, IS456.ref("Cl. 38.1, 26.5.2.1"))
             return "φ${f0(inp.bar)} @ ${f0(sp)}"
@@ -137,7 +139,9 @@ object CounterfortWall {
             listOf("Counterfort main", "$nCf φ${f0(inp.bar)}", "inclined back face"),
             listOf("Ties", "${f0(asH)} / ${f0(asV)} mm²/m", "horizontal / vertical, two-legged"),
         ))
-        return Result(s.b, checks, rb.build())
+        val scene = com.structura.core.viz.WallScenes.counterfort(h, s.b, s.t, d, inp.stem, l, inp.counterfort, ka, inp.gammaSoil, inp.surcharge, s.qmax, s.qmin,
+            inp.cover, inp.bar, spacings["Stem at counterforts (base strip)"] ?: 0.2, spacings["Heel at counterforts"] ?: 0.2, spacings["Toe (cantilever)"] ?: 0.2, nCf)
+        return Result(s.b, checks, rb.build(), scene)
     }
 
     private fun section(s: RetainingWall.Stability, tb: Double, d: Double, h: Double): ReportDoc.Block.Figure {

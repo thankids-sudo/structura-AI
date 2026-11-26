@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -74,9 +76,12 @@ fun DesignModuleScreen(id: String, onBack: () -> Unit, onStudio: () -> Unit) {
     var report by remember(id) { mutableStateOf<ReportDoc?>(null) }
     var model by remember(id) { mutableStateOf<FrameModel?>(null) }
     var dxfText by remember(id) { mutableStateOf<String?>(null) }
+    var scene by remember(id) { mutableStateOf<com.structura.core.viz.Scene3D?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scroll = rememberScrollState()
+    var resultsY by remember { mutableStateOf(0) }
+    androidx.compose.runtime.LaunchedEffect(report) { if (report != null) { kotlinx.coroutines.delay(80); scroll.animateScrollTo(resultsY) } }
 
     Scaffold(topBar = {
         TopAppBar(
@@ -112,9 +117,9 @@ fun DesignModuleScreen(id: String, onBack: () -> Unit, onStudio: () -> Unit) {
                         try {
                             val (r, m) = withContext(Dispatchers.Default) { module.run(snapshot) }
                             dxfText = module.dxf?.let { f -> withContext(Dispatchers.Default) { f(snapshot) } }
+                            scene = module.scene?.let { f -> withContext(Dispatchers.Default) { runCatching { f(snapshot) }.getOrNull() } }
                             report = r; model = m
                             ProjectStore.saveInputs(context, id, snapshot)
-                            scroll.animateScrollTo(scroll.maxValue)
                         } catch (e: Exception) { error = e.message ?: e.toString() } finally { busy = false }
                     }
                 }, enabled = !busy, modifier = Modifier.weight(1f)) { Text("⚙ Analyse & design") }
@@ -122,7 +127,7 @@ fun DesignModuleScreen(id: String, onBack: () -> Unit, onStudio: () -> Unit) {
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             report?.let { r ->
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.onGloballyPositioned { resultsY = it.positionInParent().y.toInt() }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { PdfExport.share(context, r) }, modifier = Modifier.weight(1f)) { Text("↓ PDF report") }
                     dxfText?.let { d ->
                         OutlinedButton(onClick = { com.structura.app.shareTextFile(context, "${module.id}.dxf", "application/dxf", d, module.title + " — detail drawing") }, modifier = Modifier.weight(1f)) { Text("↓ DXF") }
@@ -130,6 +135,9 @@ fun DesignModuleScreen(id: String, onBack: () -> Unit, onStudio: () -> Unit) {
                     model?.let { m ->
                         OutlinedButton(onClick = { DesignSession.studioModel = m; onStudio() }, modifier = Modifier.weight(1f)) { Text("◇ Open in 3D Studio") }
                     }
+                }
+                scene?.let { sc ->
+                    com.structura.app.ui.viz.SceneCard(sc, Modifier.fillMaxWidth().height(460.dp))
                 }
                 ReportView(r)
             }

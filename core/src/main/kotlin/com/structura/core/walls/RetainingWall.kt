@@ -37,7 +37,7 @@ object RetainingWall {
         val heel get() = b - t - tb
     }
 
-    class Result(val st: Stability, val checks: List<DesignCheck>, val report: ReportDoc)
+    class Result(val st: Stability, val checks: List<DesignCheck>, val report: ReportDoc, val scene: com.structura.core.viz.Scene3D? = null)
 
     fun ka(phi: Double) = (1 - sin(phi * PI / 180)) / (1 + sin(phi * PI / 180))
 
@@ -96,10 +96,12 @@ object RetainingWall {
         val astMin = { thk: Double -> 0.0012 * 1000 * thk * 1000 }
         val aBar = PI * inp.bar * inp.bar / 4
         fun spacing(ast: Double) = min(min(300.0, 3 * 1000.0), floor(1000 * aBar / ast / 10) * 10)
+        val spacings = HashMap<String, Double>()
         fun member(name: String, mu: Double, vu: Double, thk: Double, where: String): Pair<String, Double> {
             val dd = dEff(thk)
             val ast = max(SlabDesigner.astFor(mu, dd, inp.fck, inp.fy), astMin(thk))
             val sp = spacing(ast); val prov = 1000 * aBar / sp
+            spacings[name] = sp / 1000
             val tv = vu * 1000 / (1000 * dd); val tc = IS456.tauC(100 * prov / (1000 * dd), inp.fck)
             steps += "$name: Mu = ${f2(mu)} kN·m/m, Vu = ${f2(vu)} kN/m, d = ${f0(dd)} mm → Ast = ${f0(ast)} mm²/m → φ${f0(inp.bar)} @ ${f0(sp)} c/c ($where)"
             checks += DesignCheck("$name flexure", "Ast req ${f0(ast)}", "provided ${f0(prov)} mm²/m", if (prov >= ast) Status.PASS else Status.FAIL, IS456.ref("Cl. 38.1, 26.5.2.1"))
@@ -140,7 +142,10 @@ object RetainingWall {
             listOf("Toe", toeBars.first, "bottom", "${f0(distB)} mm²/m"),
         ))
         rb.h("5. Notes").p("Provide weep holes (≈ 100 mm at 1.5 m c/c) with a graded filter behind the stem; drained backfill assumed (no water pressure). Check development length of stem bars into the base (IS 456 Cl. 26.2.1).")
-        return Result(st, checks, rb.build())
+        val scene = com.structura.core.viz.WallScenes.cantilever(h, st.b, st.t, d, inp.stemTop, tb, ka, inp.gammaSoil, inp.surcharge, st.qmax, st.qmin,
+            st.pa, st.ps, inp.cover, inp.bar, spacings["Stem"] ?: 0.2, spacings["Heel"] ?: 0.2, spacings["Toe"] ?: 0.2,
+            com.structura.core.viz.WallScenes.spacingFor(distB, 10.0))
+        return Result(st, checks, rb.build(), scene)
     }
 
     private fun figure(inp: Input, s: Stability, tb: Double, d: Double): ReportDoc.Block.Figure {
