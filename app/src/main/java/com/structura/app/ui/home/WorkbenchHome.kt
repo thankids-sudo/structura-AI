@@ -198,7 +198,7 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
         busy = true
         scope.launch {
             try {
-                val res = ensureResults()
+                val res = results ?: withContext(Dispatchers.Default) { FrameSolver.analyseAll(model, LoadCombination.forModel(model.loadCases)) }.also { results = it }
                 val (rcc, steel) = withContext(Dispatchers.Default) { com.structura.core.fem.RccModelDesign.design(model, res) to SteelModelCheck.check(model, res) }
                 rccDesign = rcc
                 val map = HashMap<Int, Triple<Double, Boolean, String>>()
@@ -398,7 +398,7 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("${sel.members.size} M · ${sel.nodes.size} N", color = Orange, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
                         Pill("All", false) { sel = O.all(model) }
-                        Pill("None", false) { sel = O.Sel() }
+                        Pill("None", false) { sel = com.structura.core.fem.ModelOps.Sel() }
                         Pill("Invert", false) { sel = O.invert(model, sel) }
                         Pill("Columns", false) { sel = sel.copy(members = sel.members + O.columns(model)) }
                         Pill("Beams", false) { sel = sel.copy(members = sel.members + O.beams(model)) }
@@ -406,13 +406,13 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
                         Pill("Supports", false) { sel = sel.copy(nodes = sel.nodes + model.supports.map { it.node }) }
                         Pill("Same level", false) {
                             val z = (sel.nodes.firstOrNull() ?: sel.members.firstOrNull()?.let { id -> model.members.first { it.id == id }.i })?.let { model.node(it).z }
-                            if (z == null) status = "Select a node or beam first" else { val l = O.atLevel(model, z); sel = O.Sel(sel.nodes + l.nodes, sel.members + l.members) }
+                            if (z == null) status = "Select a node or beam first" else { val l = O.atLevel(model, z); sel = com.structura.core.fem.ModelOps.Sel(sel.nodes + l.nodes, sel.members + l.members) }
                         }
                         Pill("Similar", false) { sel.members.firstOrNull()?.let { sel = sel.copy(members = sel.members + O.similar(model, it)) } ?: run { status = "Select a member first" } }
                     }
                     if (!sel.isEmpty) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                         EditOp.entries.forEach { o -> Pill(o.label, false) {
-                            if (o == EditOp.DELETE) commit(O.delete(model, sel), "${sel.count} item(s) deleted").also { sel = O.Sel() }
+                            if (o == EditOp.DELETE) commit(O.delete(model, sel), "${sel.count} item(s) deleted").also { sel = com.structura.core.fem.ModelOps.Sel() }
                             else if (o == EditOp.DESIGN) runDesign(sel.members)
                             else op = o
                         } }
