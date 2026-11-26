@@ -98,7 +98,7 @@ class RoofWallsTest {
             assertEquals(r.model.nodes.size, r.detail.joints.size)
             val dxf = DxfWriter.write(r.detail.drawing)
             assertTrue(dxf.contains("S-BOLT") && dxf.contains("EOF"))
-            println("truss double=$dbl bolts=${r.detail.ends.sumOf { it.bolts }} safe=${r.report.isSafe}")
+            println("truss double=$dbl bolts=${r.detail.ends.sumOf { it.bolts }} safe=${r.report.isSafe} fails=" + r.report.blocks.filterIsInstance<com.structura.core.report.ReportDoc.Block.Checks>().flatMap { it.checks }.filter { it.status == Status.FAIL }.joinToString { it.item + " " + it.value })
         }
     }
 

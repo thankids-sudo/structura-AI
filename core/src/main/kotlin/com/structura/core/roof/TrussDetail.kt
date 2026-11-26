@@ -72,11 +72,19 @@ object TrussDetail {
             val f = forces[m.id]?.let { max(it.first, it.second) } ?: 0.0
             val tb = if (double) min(2 * sp.t, tg) else min(sp.t, tg)
             val r = IS800.boltGroup(bolt, grade.fu, tb, max(f, 1e-3), edge, pitch, nn = if (double) 2 else 1)
-            val n = max(2, ceil(f / r.capacity - 1e-9).toInt())
-            boltCount[m.id] = n
-            ends += EndBolts(m.id, m.i, f, n, r.capacity); ends += EndBolts(m.id, m.j, f, n, r.capacity)
             val ft = forces[m.id]?.first ?: 0.0
             val g = ceil(0.55 * sp.leg / 5) * 5
+            fun gussetOk(nb: Int): Boolean {
+                val lg = (nb - 1) * pitch; val lw = 2 * lg * tan30
+                val lv = lg + edge; val lt = sp.leg - g + 12
+                val tdb = min(lv * tg * grade.fy / (kotlin.math.sqrt(3.0) * 1.10) + 0.9 * (lt - 0.5 * d0) * tg * grade.fu / 1.25,
+                    0.9 * (lv - (nb - 0.5) * d0) * tg * grade.fu / (kotlin.math.sqrt(3.0) * 1.25) + lt * tg * grade.fy / 1.10) / 1e3
+                return f <= lw * tg * grade.fy / 1.10 / 1e3 && ft <= tdb
+            }
+            var n = max(2, ceil(f / r.capacity - 1e-9).toInt())
+            if (!welded) { var k = 0; while (!gussetOk(n) && k++ < 8) n++ }   // lengthen the bolt group for the gusset (Whitmore width / block shear)
+            boltCount[m.id] = n
+            ends += EndBolts(m.id, m.i, f, n, r.capacity); ends += EndBolts(m.id, m.j, f, n, r.capacity)
             if (welded) {
                 // balanced welds: centroid c from the heel of an equal angle; heel takes Fa·(b − c)/b, toe Fa·c/b
                 val fa = max(f, 1e-3) / (if (double) 2 else 1)
@@ -120,6 +128,7 @@ object TrussDetail {
         }
         checks += DesignCheck("Gusset in compression", "free edge ≤ 42ε·tg = ${f0(42 * kotlin.math.sqrt(250 / grade.fy) * tg)} mm", "detailer to confirm on the drawing; else stiffen the edge", Status.INFO, "IS 800:2007 Table 2 (outstand)")
         steps += "Bolts M${f0(boltDia)} grade 4.6 in ${if (double) "double shear (two angles on the gusset)" else "single shear"}, hole ${f0(d0)} mm; pitch ${f0(pitch)} mm (≥ 2.5d), end distance ${f0(edge)} mm (≥ 1.5d0); gusset ${f0(tg)} mm"
+        steps += "Bolts per end = max(2, F / bolt value), increased where the gusset Whitmore width or block shear governs"
         steps += "Bolt value = min(shear Vdsb, bearing Vdpb on the thinner of ${if (double) "2t and the gusset" else "angle and gusset"}) — e.g. M1: ${f2(v1)} kN (IS 800 Cl. 10.3.3, 10.3.4); at least 2 bolts per end"
         checks += DesignCheck("Pitch / end distance", "${f0(pitch)} / ${f0(edge)} mm", "≥ 2.5d = ${f1(2.5 * boltDia)} / ≥ 1.5d0 = ${f1(1.5 * d0)} mm", Status.PASS, "IS 800:2007 Cl. 10.2.2, 10.2.4")
         checks += DesignCheck("Maximum bolts in one line", "${boltCount.values.max()}", "long joint (> 15d) reduction if (n − 1)·p > ${f0(15 * boltDia)} mm", if ((boltCount.values.max() - 1) * pitch > 15 * boltDia) Status.INFO else Status.PASS, "IS 800:2007 Cl. 10.3.3.1")
