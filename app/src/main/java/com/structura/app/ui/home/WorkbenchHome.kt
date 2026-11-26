@@ -149,7 +149,7 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
     var review by remember(model) { mutableStateOf<ResultCheck.Review?>(null) }
     var showReview by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
-    var status by remember(model) { mutableStateOf("Σ static check —") }
+    var status by remember { mutableStateOf("Σ static check —") }
     // viewport state: result view, combination, load case shown, build-in, idle spin, gesture hint
     var view by remember(model) { mutableStateOf(ResultView.MODEL) }
     var combo by remember(model) { mutableStateOf(0) }
@@ -167,6 +167,86 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
         }
     }
     androidx.compose.runtime.LaunchedEffect(Unit) { kotlinx.coroutines.delay(6000); hint = false }
+
+    // ---- drawing in the main space (same tools as the Studio, compact)
+    var draw by remember { mutableStateOf(false) }
+    var tool by remember { mutableStateOf(DrawTool.MEMBER) }
+    var plane by remember { mutableStateOf(com.structura.app.ui.fem.Plane.XZ) }
+    var snap by remember { mutableStateOf(1.0) }
+    var pending by remember { mutableStateOf<Int?>(null) }
+    var selNode by remember { mutableStateOf<Int?>(null) }
+    var selMember by remember { mutableStateOf<Int?>(null) }
+    var loadVal by remember { mutableStateOf("-10") }
+    var loadCase by remember { mutableStateOf(com.structura.core.fem.LoadCase.DL) }
+    var undo by remember { mutableStateOf(listOf<FrameModel>()) }
+    var redo by remember { mutableStateOf(listOf<FrameModel>()) }
+    var autoRun by remember { mutableStateOf(true) }
+    fun commit(m: FrameModel, msg: String) {
+        undo = (undo + model).takeLast(60); redo = emptyList()
+        DesignSession.currentModel = m
+        com.structura.app.project.ProjectStore.save(context)
+        status = msg
+    }
+    fun onDrawTap(t: com.structura.app.ui.fem.TapInfo) {
+        val E = com.structura.core.fem.ModelEditor
+        val proto = model.members.lastOrNull()
+        when (tool) {
+            DrawTool.SELECT -> { selNode = t.node; selMember = if (t.node == null) t.member else null
+                status = t.node?.let { id -> val n = model.node(id); "N$id (${"%.2f".format(n.x)}, ${"%.2f".format(n.y)}, ${"%.2f".format(n.z)}) m · ${E.supportType(model, id).name.lowercase()}" }
+                    ?: t.member?.let { id -> val m = model.members.first { it.id == id }; "M$id N${m.i}→N${m.j} · ${m.section.name} · ${"%.2f".format((model.node(m.j).pos - model.node(m.i).pos).length)} m" } ?: "Nothing selected" }
+            DrawTool.NODE -> t.planePoint?.let { p -> val (m, id) = E.addNode(model, p); if (m !== model) commit(m, "Node N$id") } ?: run { status = "Rotate the view — the work plane is edge-on" }
+            DrawTool.MEMBER -> {
+                var m = model
+                val target = t.node ?: t.planePoint?.let { p -> E.addNode(m, p).also { m = it.first }.second }
+                if (target == null) { status = "Tap a node or the grid"; return }
+                val p0 = pending
+                when {
+                    p0 == null -> { if (m !== model) commit(m, "Start N$target"); pending = target; status = "Start N$target — tap the end point" }
+                    p0 == target -> { pending = null; status = "Chain finished" }
+                    else -> {
+                        val mat = proto?.material ?: com.structura.app.ui.studio.SectionSpec().material()
+                        val sec = proto?.section ?: com.structura.app.ui.studio.SectionSpec().section()
+                        val (m2, mid) = E.addMember(m, p0, target, mat, sec)
+                        commit(m2, if (mid != null) "Member M$mid: N$p0 → N$target" else "Member already exists"); pending = target
+                    }
+                }
+            }
+            DrawTool.SPLIT -> t.member?.let { id -> val (m, nid) = E.splitMember(model, id); commit(m, "M$id split at N$nid") }
+            DrawTool.FIX, DrawTool.PIN -> t.node?.let { id ->
+                val want = if (tool == DrawTool.FIX) com.structura.core.fem.ModelEditor.SupportType.FIXED else com.structura.core.fem.ModelEditor.SupportType.PINNED
+                val now = E.supportType(model, id)
+                commit(E.setSupport(model, id, if (now == want) com.structura.core.fem.ModelEditor.SupportType.NONE else want), if (now == want) "Support removed at N$id" else "${want.name.lowercase()} support at N$id")
+            }
+            DrawTool.LOAD -> t.node?.let { id ->
+                val v = loadVal.replace(',', '.').toDoubleOrNull() ?: 0.0
+                commit(E.addNodalLoad(model, id, com.structura.core.fem.Vec3(0.0, 0.0, v * com.structura.app.Units.force), loadCase), "$loadCase ${"%.1f".format(v)} at N$id")
+            }
+            DrawTool.UDL -> t.member?.let { id ->
+                val v = loadVal.replace(',', '.').toDoubleOrNull() ?: 0.0
+                commit(E.addMemberUdl(model, id, com.structura.core.fem.LoadDir.GLOBAL_Z, v * com.structura.app.Units.udl, loadCase), "$loadCase UDL ${"%.1f".format(v)} on M$id")
+            }
+            DrawTool.DELETE -> when {
+                t.node != null -> commit(E.deleteNode(model, t.node), "N${t.node} deleted")
+                t.member != null -> commit(E.deleteMember(model, t.member), "M${t.member} deleted")
+                else -> {}
+            }
+        }
+    }
+    // re-analyse quietly whenever the model changes, then play the deflected shape (as in the Studio)
+    androidx.compose.runtime.LaunchedEffect(model, autoRun) {
+        if (!autoRun || model.supports.isEmpty() || model.members.isEmpty()) return@LaunchedEffect
+        kotlinx.coroutines.delay(if (draw) 700 else 1500)
+        runCatching {
+            val res = withContext(Dispatchers.Default) { FrameSolver.analyseAll(model, LoadCombination.forModel(model.loadCases)) }
+            if (res.isNotEmpty()) {
+                results = res
+                combo = res.indices.maxBy { res[it].second.maxDisplacement().second }
+                val fe = res.maxOf { (_, r) -> r.equilibriumError.maxOf { abs(it) } }
+                if (!draw) status = "Σ ${res.size} combos · ΣF ${"%.0e".format(fe)} kN · live deflected shape"
+                if (view == ResultView.MODEL && !draw) view = ResultView.DEFORMED
+            }
+        }
+    }
 
     fun open(t: Tool) { sheet = null; if (t.panel != 0) DesignSession.studioPanel = t.panel; onOpen(t.route) }
 
@@ -232,31 +312,37 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
         // UCS space
         Box(Modifier.weight(1f).fillMaxWidth()) {
             val shown = results?.getOrNull(combo)
+            val showResults = !draw && view != ResultView.MODEL
             FrameView3D(
-                model, if (view == ResultView.MODEL) null else shown?.second, view, Modifier.fillMaxSize(), animate = true, camera = camera,
-                memberUtil = if (view == ResultView.MODEL) util else null, dark = true, loadCase = caseSel, reveal = reveal.value,
-                doubleTapFit = true, onTouch = { spin = false; hint = false },
+                model, if (showResults) shown?.second else null, if (showResults) view else ResultView.MODEL, Modifier.fillMaxSize(), animate = true, camera = camera,
+                memberUtil = if (!showResults && !draw) util else null, dark = true, loadCase = if (draw) null else caseSel, reveal = if (draw) 1f else reveal.value,
+                doubleTapFit = !draw, onTouch = { spin = false; hint = false },
+                workPlane = if (draw) com.structura.app.ui.fem.WorkPlane(plane, 0.0, snap, visible = true) else null,
+                onTap = if (draw) ({ t -> onDrawTap(t) }) else null,
+                selectedNode = if (draw) selNode else null, selectedMember = if (draw) selMember else null, pendingNode = if (draw) pending else null,
             )
             Row(Modifier.align(Alignment.TopCenter).padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Pill("◇ 3D", true) { camera.iso() }
                 Pill("XY", false) { camera.top() }
                 Pill("XZ", false) { camera.front() }
                 Pill("YZ", false) { camera.right() }
+                if (draw) Pill("✓ Done", true) { draw = false; pending = null; selNode = null; selMember = null; camera.iso() }
             }
-            Column(Modifier.align(Alignment.CenterStart).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (!draw) Column(Modifier.align(Alignment.CenterStart).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("DESIGN", color = Muted, fontSize = 10.sp)
                 RailButton(Phase.RCC, sheet == Phase.RCC) { sheet = Phase.RCC }
                 RailButton(Phase.STEEL, sheet == Phase.STEEL) { sheet = Phase.STEEL }
                 RailButton(Phase.ROOF, sheet == Phase.ROOF) { sheet = Phase.ROOF }
                 RailButton(Phase.WALL, sheet == Phase.WALL) { sheet = Phase.WALL }
             }
-            Column(Modifier.align(Alignment.CenterEnd).padding(end = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (!draw) Column(Modifier.align(Alignment.CenterEnd).padding(end = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("MODEL", color = Muted, fontSize = 10.sp)
                 RailButton(Phase.FEM, sheet == Phase.FEM) { sheet = Phase.FEM }
                 RailButton(Phase.PLAN, sheet == Phase.PLAN) { sheet = Phase.PLAN }
                 RailButton(Phase.STAAD, sheet == Phase.STAAD) { sheet = Phase.STAAD }
             }
             val caption = when {
+                draw -> "✎ ${tool.hint}"
                 view != ResultView.MODEL && shown != null -> "${view.label} · ${shown.first.name}"
                 util != null -> "η · IS 800 · all combinations"
                 caseSel == null && cases.isNotEmpty() -> "Loads · all cases"
@@ -265,13 +351,34 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
             }
             if (caption.isNotEmpty()) Text(caption, color = Orange, fontFamily = FontFamily.Monospace, fontSize = 11.sp, maxLines = 1,
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 52.dp))
-            androidx.compose.animation.AnimatedVisibility(hint, Modifier.align(Alignment.Center),
+            androidx.compose.animation.AnimatedVisibility(hint && !draw, Modifier.align(Alignment.BottomCenter).padding(bottom = 56.dp, start = 70.dp, end = 70.dp),
                 enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) {
-                Text("1 finger rotate · 2 fingers pan & zoom · double-tap to fit", color = Ink.copy(alpha = 0.85f), fontSize = 12.sp,
+                Text("Drag to rotate · two fingers pan & zoom · double-tap to fit", textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = Ink.copy(alpha = 0.85f), fontSize = 12.sp,
                     modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(Bar.copy(alpha = 0.85f)).padding(horizontal = 12.dp, vertical = 6.dp))
             }
+            if (draw) Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Bar.copy(alpha = 0.92f)).padding(vertical = 6.dp)) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    DrawTool.entries.forEach { t -> Pill(t.label, tool == t) { tool = t; pending = null } }
+                }
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Pill("↶", false) { undo.lastOrNull()?.let { prev -> redo = redo + model; undo = undo.dropLast(1); DesignSession.currentModel = prev; com.structura.app.project.ProjectStore.save(context); status = "Undo" } }
+                    Pill("↷", false) { redo.lastOrNull()?.let { nxt -> undo = undo + model; redo = redo.dropLast(1); DesignSession.currentModel = nxt; com.structura.app.project.ProjectStore.save(context); status = "Redo" } }
+                    com.structura.app.ui.fem.Plane.entries.forEach { pl -> Pill("Plane " + pl.name, plane == pl) {
+                        plane = pl; when (pl) { com.structura.app.ui.fem.Plane.XY -> camera.top(); com.structura.app.ui.fem.Plane.XZ -> camera.front(); com.structura.app.ui.fem.Plane.YZ -> camera.right() } } }
+                    listOf(0.5, 1.0, 1.5, 3.0).forEach { sn -> Pill("${sn} m", snap == sn) { snap = sn } }
+                    if (tool == DrawTool.LOAD || tool == DrawTool.UDL) {
+                        androidx.compose.foundation.text.BasicTextField(loadVal, { loadVal = it }, singleLine = true,
+                            textStyle = androidx.compose.ui.text.TextStyle(color = Ink, fontSize = 13.sp, fontFamily = FontFamily.Monospace),
+                            cursorBrush = androidx.compose.ui.graphics.SolidColor(Cyan),
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                            modifier = Modifier.width(70.dp).border(BorderStroke(1.dp, Cyan), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 7.dp))
+                        Text(if (tool == DrawTool.LOAD) (if (com.structura.app.Units.imperial) "kip (Z)" else "kN (Z)") else (if (com.structura.app.Units.imperial) "kip/ft" else "kN/m"), color = Muted, fontSize = 11.sp)
+                        listOf("DL", "LL", "WL").forEach { c -> Pill(c, loadCase == c) { loadCase = c } }
+                    }
+                }
+            }
             // bottom viewport controls: load case / result view / combination / fit / spin
-            Row(
+            if (!draw) Row(
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -290,6 +397,7 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
                         }
                     }
                 }
+                Pill("✎ Draw", false) { draw = true; spin = false; hint = false; camera.front(); plane = com.structura.app.ui.fem.Plane.XZ; status = "Draw: pick a tool, tap the grid" }
                 Pill("⤢ Fit", false) { camera.fit() }
                 Pill(if (spin) "⏸ Spin" else "⟳ Spin", spin) { spin = !spin }
             }
@@ -448,4 +556,18 @@ private fun DocIcon(c: Color) = Canvas(Modifier.size(18.dp)) {
     val w = 1.8f * size.width / 18
     drawRect(c, androidx.compose.ui.geometry.Offset(size.width * 0.2f, 0f), androidx.compose.ui.geometry.Size(size.width * 0.6f, size.height), style = Stroke(w))
     for (y in listOf(0.35f, 0.55f, 0.75f)) drawLine(c, androidx.compose.ui.geometry.Offset(size.width * 0.32f, size.height * y), androidx.compose.ui.geometry.Offset(size.width * 0.68f, size.height * y), w)
+}
+
+
+/** Drawing tools available directly in the Workbench space. */
+enum class DrawTool(val label: String, val hint: String) {
+    SELECT("Select", "tap a node or member for its data"),
+    NODE("Node", "tap the grid to place a node"),
+    MEMBER("Member", "tap start, then end; tap the last node again to stop"),
+    SPLIT("½ Split", "tap a member to split it"),
+    FIX("Fix", "tap a node: fixed support"),
+    PIN("Pin", "tap a node: pinned support"),
+    LOAD("Load", "tap a node: vertical load (− = down)"),
+    UDL("UDL", "tap a member: uniform load (− = down)"),
+    DELETE("Delete", "tap a node or member to delete"),
 }
