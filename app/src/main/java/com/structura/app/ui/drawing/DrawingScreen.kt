@@ -55,6 +55,8 @@ fun layerColor(l: Layer): Color = when (l) {
     Layer.DIM -> Color(0xFF00838F)
     Layer.TEXT -> Color(0xFF1A237E)
     Layer.CENTER -> Color(0xFFAD1457)
+    Layer.STEEL -> Color(0xFF37474F)
+    Layer.BOLT -> Color(0xFFC62828)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
