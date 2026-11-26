@@ -11,7 +11,11 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -65,6 +69,7 @@ private fun value(st: Station, v: ResultView): Double = when (v) {
 class Projector(
     model: FrameModel, yawDeg: Float, pitchDeg: Float, zoom: Float,
     private val w: Float, private val h: Float, extra: List<Vec3> = emptyList(),
+    private val panX: Float = 0f, private val panY: Float = 0f,
 ) {
     private val cy = cos(Math.toRadians(yawDeg.toDouble()))
     private val sy = sin(Math.toRadians(yawDeg.toDouble()))
@@ -96,8 +101,8 @@ class Projector(
 
     /** Screen point → world point on a work plane (null if the plane is seen edge-on). */
     fun onPlane(s: Offset, plane: Plane, offset: Double): Vec3? {
-        val sx = (s.x - w / 2) / scale + cx
-        val up = -(s.y - h / 2) / scale + cyy
+        val sx = (s.x - panX - w / 2) / scale + cx
+        val up = -(s.y - panY - h / 2) / scale + cyy
         return when (plane) {
             Plane.XY -> {
                 if (abs(sp) < 0.08) return null
@@ -121,7 +126,7 @@ class Projector(
 
     fun screen(p: Vec3): Offset {
         val (x, y) = proj(p)
-        return Offset((w / 2 + (x - cx) * scale).toFloat(), (h / 2 - (y - cyy) * scale).toFloat())
+        return Offset((w / 2 + (x - cx) * scale).toFloat() + panX, (h / 2 - (y - cyy) * scale).toFloat() + panY)
     }
 
     /** Screen-space direction of a world-space vector. */
@@ -144,8 +149,12 @@ class Camera(yaw: Float = -35f, pitch: Float = 25f) {
     var yaw by mutableFloatStateOf(yaw)
     var pitch by mutableFloatStateOf(pitch)
     var zoom by mutableFloatStateOf(1f)
+    var panX by mutableFloatStateOf(0f)
+    var panY by mutableFloatStateOf(0f)
 
-    fun set(y: Float, p: Float) { yaw = y; pitch = p; zoom = 1f }
+    fun set(y: Float, p: Float) { yaw = y; pitch = p; zoom = 1f; panX = 0f; panY = 0f }
+    /** Re-centre and reset zoom, keeping the viewing direction. */
+    fun fit() { zoom = 1f; panX = 0f; panY = 0f }
     fun iso() = set(-35f, 25f)
     fun top() = set(0f, 90f)
     fun front() = set(0f, 0f)
@@ -214,8 +223,19 @@ fun FrameView3D(
     memberUtil: Map<Int, Double>? = null,
     /** Dark "UCS space" look for the Workbench home (navy ground, light members, brand axis colours). */
     dark: Boolean = false,
+    /** Show loads of this case only (null = all cases, "" = no loads). */
+    loadCase: String? = null,
+    /** 0…1: members appear bottom-up (build-in animation); loads and supports appear at 1. */
+    reveal: Float = 1f,
+    /** Double-tap re-centres the view (adds the double-tap delay to single taps, so off in editors). */
+    doubleTapFit: Boolean = false,
+    /** Called when the user touches the view (e.g. to stop an idle spin). */
+    onTouch: (() -> Unit)? = null,
+    /** Two-finger gestures pan as well as zoom; one finger always rotates. */
+    twoFingerPan: Boolean = true,
 ) {
     viewDark = dark
+    val touchCallback by rememberUpdatedState(onTouch)
     var canvasSize by remember { mutableStateOf(Size(1f, 1f)) }
     val tapCallback by rememberUpdatedState(onNodeTap)
     val tapInfoCallback by rememberUpdatedState(onTap)
@@ -243,19 +263,31 @@ fun FrameView3D(
         modifier
             .background(if (dark) Color(0xFF0E1726) else Color.White)
             .onSizeChanged { canvasSize = Size(it.width.toFloat(), it.height.toFloat()) }
-            .pointerInput(camera) {
-                detectTransformGestures { _, pan, z, _ ->
-                    camera.yaw += pan.x * 0.4f
-                    camera.pitch = (camera.pitch + pan.y * 0.4f).coerceIn(-90f, 90f)
-                    camera.zoom = (camera.zoom * z).coerceIn(0.3f, 8f)
+            .pointerInput(camera, twoFingerPan) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    touchCallback?.invoke()
+                    do {
+                        val ev = awaitPointerEvent()
+                        val fingers = ev.changes.count { it.pressed }
+                        val pan = ev.calculatePan(); val z = ev.calculateZoom()
+                        if (fingers >= 2 && twoFingerPan) {
+                            camera.panX += pan.x; camera.panY += pan.y
+                        } else if (fingers == 1 || !twoFingerPan) {
+                            camera.yaw += pan.x * 0.4f
+                            camera.pitch = (camera.pitch + pan.y * 0.4f).coerceIn(-90f, 90f)
+                        }
+                        if (z != 1f) camera.zoom = (camera.zoom * z).coerceIn(0.3f, 12f)
+                        if (pan != Offset.Zero || z != 1f) ev.changes.forEach { if (it.positionChanged()) it.consume() }
+                    } while (ev.changes.any { it.pressed })
                 }
             }
-            .pointerInput(camera) {
-                detectTapGestures { tap ->
+            .pointerInput(camera, doubleTapFit) {
+                detectTapGestures(onDoubleTap = if (doubleTapFit) ({ camera.fit() }) else null) { tap ->
                     val m = modelState
                     val wp = wpState
                     val pj = Projector(m, camera.yaw, camera.pitch, camera.zoom, canvasSize.width, canvasSize.height,
-                        wp?.let { gridCorners(m, it).toList() } ?: emptyList())
+                        wp?.let { gridCorners(m, it).toList() } ?: emptyList(), camera.panX, camera.panY)
                     val hit = m.nodes.minByOrNull { (pj.screen(it.pos) - tap).getDistance() }
                     val nodeHit = if (hit != null && (pj.screen(hit.pos) - tap).getDistance() < 48f) hit.id else null
                     tapCallback?.invoke(nodeHit)
@@ -276,7 +308,7 @@ fun FrameView3D(
             },
     ) {
         Canvas(Modifier.fillMaxSize()) {
-            val pj = Projector(model, camera.yaw, camera.pitch, camera.zoom, size.width, size.height, extras(model))
+            val pj = Projector(model, camera.yaw, camera.pitch, camera.zoom, size.width, size.height, extras(model), camera.panX, camera.panY)
             val modelSize = pj.modelSize
             workPlane?.takeIf { it.visible }?.let { grid(pj, model, it) }
             axesTriad(pj)
@@ -297,7 +329,10 @@ fun FrameView3D(
                     drawArrow(tip - Offset(dir.x / dl, dir.y / dl) * 34f, tip, loadColor.copy(alpha = 0.8f), 2f)
                 }
             }
+            val order = if (reveal >= 1f) null else model.members.sortedWith(compareBy({ minOf(model.node(it.i).z, model.node(it.j).z) }, { model.node(it.i).x }))
+            val shownIds = order?.take(kotlin.math.ceil(reveal * order.size).toInt())?.map { it.id }?.toHashSet()
             for (m in model.members) {
+                if (shownIds != null && m.id !in shownIds) continue
                 val sel = m.id == selectedMember
                 val u = if (!faded) memberUtil?.get(m.id) else null
                 drawLine(
@@ -312,14 +347,15 @@ fun FrameView3D(
                     if (m.hingeJ) drawCircle(ink, 6f, pj.screen(a + (b - a) * 0.94), style = Stroke(2f))
                 }
             }
-            supports(pj, model)
+            if (reveal >= 1f) supports(pj, model)
             if (!faded && memberUtil != null) utilLegend()
             for (n in model.nodes) {
+                if (shownIds != null && model.members.none { (it.i == n.id || it.j == n.id) && it.id in shownIds }) continue
                 val p = pj.screen(n.pos)
                 if (n.id == selectedNode || n.id == pendingNode || n.id in pendingNodes) drawCircle(Color(0xFFFFA000), 16f, p, style = Stroke(4f))
                 drawCircle(ink, 4.5f, p)
             }
-            loads(pj, model, loadColor)
+            if (reveal >= 1f && loadCase != "" && view == ResultView.MODEL) loads(pj, model, loadColor, loadCase)
 
             if (view == ResultView.BUCKLING || view == ResultView.MODAL) {
                 val shape = (if (view == ResultView.MODAL) modeShape else buckling?.modeShape) ?: return@Canvas
@@ -472,23 +508,35 @@ private fun DrawScope.supports(pj: Projector, model: FrameModel) {
 }
 
 /** Load arrows: nodal forces scaled to the largest one, gravity UDLs as rows of small arrows. */
-private fun DrawScope.loads(pj: Projector, model: FrameModel, c: Color) {
-    val maxF = model.nodalLoads.maxOfOrNull { Vec3(it.values[0], it.values[1], it.values[2]).length } ?: 0.0
+/** Load value with sensible precision: 0.42 · 4.2 · 42 kN. */
+internal fun kn(v: Double): String = when {
+    kotlin.math.abs(v) >= 10 -> "%.0f kN".format(v)
+    kotlin.math.abs(v) >= 1 -> "%.1f kN".format(v)
+    else -> "%.2f kN".format(v)
+}
+
+private fun DrawScope.loads(pj: Projector, model: FrameModel, c: Color, case: String? = null) {
+    // one resultant per node and case shown, so overlapping arrows from many small loads do not pile up
+    val byNode = model.nodalLoads.filter { case == null || it.case == case }.groupBy { it.node }.mapValues { (_, ls) ->
+        Vec3(ls.sumOf { it.values[0] }, ls.sumOf { it.values[1] }, ls.sumOf { it.values[2] })
+    }.filterValues { it.length > 1e-9 }
+    val maxF = byNode.values.maxOfOrNull { it.length } ?: 0.0
     val paint = Paint().apply { textSize = 24f; isAntiAlias = true; color = c.toArgb() }
-    for (nl in model.nodalLoads) {
-        val f = Vec3(nl.values[0], nl.values[1], nl.values[2])
-        if (f.length < 1e-9) continue
-        val tip = pj.screen(model.node(nl.node).pos)
+    // labels only where they stay readable: all when few, else the largest few
+    val labelled = byNode.entries.sortedByDescending { it.value.length }.take(if (byNode.size <= 10) byNode.size else 4).map { it.key }.toHashSet()
+    for ((node, f) in byNode) {
+        val tip = pj.screen(model.node(node).pos)
         val len = 30f + 60f * (f.length / maxF).toFloat()
         val d = pj.pixelDir(f.unit())
         val dl = d.getDistance().coerceAtLeast(1e-3f)
         val u = Offset(d.x / dl, d.y / dl)
         val tail = tip - u * len
         drawArrow(tail, tip, c, 3f)
-        drawIntoCanvas { it.nativeCanvas.drawText("%.0f kN".format(f.length), tail.x + 4, tail.y - 4, paint) }
+        if (node in labelled) drawIntoCanvas { it.nativeCanvas.drawText(kn(f.length), tail.x + 4, tail.y - 4, paint) }
     }
-    val maxQ = model.memberLoads.maxOfOrNull { maxOf(kotlin.math.abs(it.w), kotlin.math.abs(it.w2 ?: it.w)) } ?: 0.0
-    for (ml in model.memberLoads) {
+    val mls = model.memberLoads.filter { case == null || it.case == case }
+    val maxQ = mls.maxOfOrNull { maxOf(kotlin.math.abs(it.w), kotlin.math.abs(it.w2 ?: it.w)) } ?: 0.0
+    for (ml in mls) {
         if (ml.dir != LoadDir.GLOBAL_Z || maxQ == 0.0) continue
         val m = model.members.firstOrNull { it.id == ml.member } ?: continue
         val a = model.node(m.i).pos

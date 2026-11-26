@@ -150,6 +150,23 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
     var showReview by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var status by remember(model) { mutableStateOf("Σ static check —") }
+    // viewport state: result view, combination, load case shown, build-in, idle spin, gesture hint
+    var view by remember(model) { mutableStateOf(ResultView.MODEL) }
+    var combo by remember(model) { mutableStateOf(0) }
+    val cases = remember(model) { (model.nodalLoads.map { it.case } + model.memberLoads.map { it.case }).distinct() }
+    var caseIdx by remember(model) { mutableStateOf(0) }          // 0 = first case … cases.size = all, cases.size + 1 = off
+    val caseSel: String? = when { cases.isEmpty() -> null; caseIdx < cases.size -> cases[caseIdx]; caseIdx == cases.size -> null; else -> "" }
+    val reveal = remember(model) { androidx.compose.animation.core.Animatable(0f) }
+    androidx.compose.runtime.LaunchedEffect(model) { reveal.animateTo(1f, androidx.compose.animation.core.tween(1400, easing = androidx.compose.animation.core.FastOutSlowInEasing)) }
+    var spin by remember { mutableStateOf(true) }
+    var hint by remember { mutableStateOf(true) }
+    androidx.compose.runtime.LaunchedEffect(spin) {
+        var last = 0L
+        while (spin) {
+            androidx.compose.runtime.withFrameNanos { t -> if (last != 0L) camera.yaw += (t - last) / 1e9f * 9f; last = t }
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(Unit) { kotlinx.coroutines.delay(6000); hint = false }
 
     fun open(t: Tool) { sheet = null; if (t.panel != 0) DesignSession.studioPanel = t.panel; onOpen(t.route) }
 
@@ -166,6 +183,9 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
                 val me = res.maxOf { (_, r) -> r.momentEquilibriumError.maxOf { abs(it) } }
                 val steel = withContext(Dispatchers.Default) { SteelModelCheck.check(model, res) }
                 util = steel.takeIf { it.isNotEmpty() }?.associate { it.member to it.utilisation }
+                // show the governing combination's deflected shape, animated
+                combo = res.indices.maxBy { res[it].second.maxDisplacement().second }
+                view = ResultView.DEFORMED
                 status = "Σ ${res.size} combos · ΣF ${"%.0e".format(fe)} kN · ΣM ${"%.0e".format(me)} kN·m" +
                     (util?.let { " · η max ${"%.2f".format(it.values.max())}" } ?: "")
             } catch (e: Exception) { status = "Analysis: ${e.message}" } finally { busy = false }
@@ -211,7 +231,12 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
 
         // UCS space
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            FrameView3D(model, null, ResultView.MODEL, Modifier.fillMaxSize(), animate = false, camera = camera, memberUtil = util, dark = true)
+            val shown = results?.getOrNull(combo)
+            FrameView3D(
+                model, if (view == ResultView.MODEL) null else shown?.second, view, Modifier.fillMaxSize(), animate = true, camera = camera,
+                memberUtil = if (view == ResultView.MODEL) util else null, dark = true, loadCase = caseSel, reveal = reveal.value,
+                doubleTapFit = true, onTouch = { spin = false; hint = false },
+            )
             Row(Modifier.align(Alignment.TopCenter).padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Pill("◇ 3D", true) { camera.iso() }
                 Pill("XY", false) { camera.top() }
@@ -231,8 +256,43 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
                 RailButton(Phase.PLAN, sheet == Phase.PLAN) { sheet = Phase.PLAN }
                 RailButton(Phase.STAAD, sheet == Phase.STAAD) { sheet = Phase.STAAD }
             }
-            if (util != null) Text("η · IS 800 · all combinations", color = Orange, fontFamily = FontFamily.Monospace, fontSize = 11.sp,
+            val caption = when {
+                view != ResultView.MODEL && shown != null -> "${view.label} · ${shown.first.name}"
+                util != null -> "η · IS 800 · all combinations"
+                caseSel == null && cases.isNotEmpty() -> "Loads · all cases"
+                caseSel != null && caseSel != "" -> "Loads · $caseSel"
+                else -> ""
+            }
+            if (caption.isNotEmpty()) Text(caption, color = Orange, fontFamily = FontFamily.Monospace, fontSize = 11.sp, maxLines = 1,
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 52.dp))
+            androidx.compose.animation.AnimatedVisibility(hint, Modifier.align(Alignment.Center),
+                enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) {
+                Text("1 finger rotate · 2 fingers pan & zoom · double-tap to fit", color = Ink.copy(alpha = 0.85f), fontSize = 12.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(Bar.copy(alpha = 0.85f)).padding(horizontal = 12.dp, vertical = 6.dp))
+            }
+            // bottom viewport controls: load case / result view / combination / fit / spin
+            Row(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (results == null || view == ResultView.MODEL) {
+                    if (cases.isNotEmpty()) Pill("Loads: " + when (caseSel) { null -> "All"; "" -> "Off"; else -> caseSel } + " ▸", false) { caseIdx = (caseIdx + 1) % (cases.size + 2) }
+                }
+                if (results != null) {
+                    listOf(ResultView.MODEL, ResultView.DEFORMED, ResultView.N, ResultView.MY, ResultView.MZ).forEach { v ->
+                        Pill(if (v == ResultView.MODEL) "Model" else v.label, view == v) { view = v; spin = false }
+                    }
+                    results?.let { rs ->
+                        if (view != ResultView.MODEL && rs.size > 1) {
+                            Pill("◂", false) { combo = (combo - 1 + rs.size) % rs.size }
+                            Text("${combo + 1}/${rs.size}", color = Muted, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                            Pill("▸", false) { combo = (combo + 1) % rs.size }
+                        }
+                    }
+                }
+                Pill("⤢ Fit", false) { camera.fit() }
+                Pill(if (spin) "⏸ Spin" else "⟳ Spin", spin) { spin = !spin }
+            }
         }
 
         // status strip
