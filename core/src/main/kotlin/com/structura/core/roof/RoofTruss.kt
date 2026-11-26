@@ -77,6 +77,14 @@ object RoofTruss {
                 listOf(1 to 2, 2 to 3, 3 to 4).forEach { mem += Triple(it.first, it.second, "Bottom chord") }
                 listOf(2 to 5, 2 to 6, 3 to 6, 3 to 7).forEach { mem += Triple(it.first, it.second, "Web") }
             }
+            Type.FAN -> {
+                // bottom chord at thirds; from each third point three webs fan out to the top-chord nodes (6 top panels)
+                listOf(0.0, span / 3, 2 * span / 3, span).forEachIndexed { i, x -> nodes += Node(i + 1, x, 0.0, 0.0) }
+                (1..5).forEach { k -> val x = span * k / 6; nodes += Node(4 + k, x, 0.0, z(x)) }
+                listOf(1 to 5, 5 to 6, 6 to 7, 7 to 8, 8 to 9, 9 to 4).forEach { mem += Triple(it.first, it.second, "Top chord") }
+                listOf(1 to 2, 2 to 3, 3 to 4).forEach { mem += Triple(it.first, it.second, "Bottom chord") }
+                listOf(2 to 5, 2 to 6, 2 to 7, 3 to 7, 3 to 8, 3 to 9).forEach { mem += Triple(it.first, it.second, "Web") }
+            }
             else -> {
                 val n = (if (panels0 % 2 == 0) panels0 else panels0 + 1).coerceAtLeast(4)
                 val p = span / n
@@ -96,10 +104,7 @@ object RoofTruss {
                         for (i in 1 until n / 2) mem += Triple(b(i), tp(i + 1), "Web")
                         for (i in n / 2 + 1 until n) mem += Triple(b(i), tp(i - 1), "Web")
                     }
-                    else -> { // FAN: diagonals from the mid-span bottom node region fanning to top nodes
-                        for (i in 1 until n / 2) mem += Triple(b(i + 1), tp(i), "Web")
-                        for (i in n / 2 + 1 until n) mem += Triple(b(i - 1), tp(i), "Web")
-                    }
+                    else -> {}
                 }
             }
         }
@@ -181,15 +186,27 @@ object RoofTruss {
                 val n = res.map { (_, r) -> r.internalForces(m.id, 2).map { it.n } }.flatten()
                 m.id to (max(0.0, n.max()) to max(0.0, -n.min()))
             }
+            val gravComp = model.members.associate { m ->
+                m.id to res.filter { (c, _) -> (c.factors[LoadCase.WL] ?: 0.0) == 0.0 }.maxOf { (_, r) -> max(0.0, -r.internalForces(m.id, 2).minOf { it.n }) }
+            }
+            val gravTen = model.members.associate { m ->
+                m.id to res.filter { (c, _) -> (c.factors[LoadCase.WL] ?: 0.0) == 0.0 }.maxOf { (_, r) -> max(0.0, r.internalForces(m.id, 2).maxOf { it.n }) }
+            }
             val newChosen = HashMap<String, Int>()
             groups = groupsMap.map { (g, ids) ->
                 val t = ids.maxOf { forces.getValue(it).first }; val c = ids.maxOf { forces.getValue(it).second }
                 val len = ids.maxOf { id -> val m = model.members[id - 1]; (model.node(m.j).pos - model.node(m.i).pos).length } * 1000
-                var k = 0; var r = AngleDesign.check(angles[0].second, angles[0].second, angles[0].third, inp.grade, t, c, len, inp.bolts, inp.holeDia, true, angles[0].first)
+                // IS 800 Table 3: 180 for compression under gravity; 350 for a tie reversed only by wind; 250 for wind-only struts
+                val lim = when {
+                    ids.any { gravComp.getValue(it) > 0.5 } -> 180.0
+                    ids.all { gravTen.getValue(it) > 0.5 || forces.getValue(it).second < 0.5 } -> 350.0
+                    else -> 250.0
+                }
+                var k = 0; var r = AngleDesign.check(angles[0].second, angles[0].second, angles[0].third, inp.grade, t, c, len, inp.bolts, inp.holeDia, true, angles[0].first, slenderLimit = lim)
                 while (k < angles.size - 1 && (r.utilisation > 1.0 || r.checks.any { it.status == Status.FAIL })) {
                     k++
                     val a = angles[k]
-                    r = AngleDesign.check(a.second, a.second, a.third, inp.grade, t, c, len, inp.bolts, inp.holeDia, true, a.first)
+                    r = AngleDesign.check(a.second, a.second, a.third, inp.grade, t, c, len, inp.bolts, inp.holeDia, true, a.first, slenderLimit = lim)
                 }
                 newChosen[g] = k
                 Group(g, ids, len, t, c, angles[k].first, r)

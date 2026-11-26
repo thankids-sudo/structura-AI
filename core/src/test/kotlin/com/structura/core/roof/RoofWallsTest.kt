@@ -48,7 +48,8 @@ class RoofWallsTest {
         assertEquals((40 + 60 + 2 * p.webLen) * 1.0 * n, g.area, 1e-9)
         // effective width: slender crest is reduced
         assertTrue(ArchRoof.effectiveWidth(200.0, 0.6, 350.0, 2e5) < 200.0)
-        assertEquals(40.0, ArchRoof.effectiveWidth(40.0, 1.0, 350.0, 2e5), 1e-12)
+        assertEquals(20.0, ArchRoof.effectiveWidth(20.0, 1.0, 350.0, 2e5), 1e-12)            // w/t below 1.28√(E/f) = 30.6
+        assertEquals(1.9 * Math.sqrt(2e5 / 350) * (1 - 0.415 / 40 * Math.sqrt(2e5 / 350)), ArchRoof.effectiveWidth(40.0, 1.0, 350.0, 2e5), 1e-9)
         val r = ArchRoof.design(ArchRoof.Input(span = 10.0, rise = 2.5, profile = p.copy(t = 1.2)))
         println("[Arch] λcr ${"%.2f".format(r.lambdaCr)}, η ${"%.3f".format(r.maxUtil)}, thrust ${"%.2f".format(r.thrust)} kN/m, δ ${"%.1f".format(r.deflection)} mm")
         assertTrue(r.lambdaCr > 1.0 && r.thrust > 0 && r.maxUtil > 0)

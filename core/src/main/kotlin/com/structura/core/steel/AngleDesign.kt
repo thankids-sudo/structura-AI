@@ -47,7 +47,8 @@ object AngleDesign {
      */
     fun check(b: Double, d: Double, t: Double, g: SteelGrade, tension: Double, compression: Double, length: Double,
               bolts: Int = 2, holeDia: Double = 18.0, fixed: Boolean = true, name: String = "ISA ${b.toInt()}×${d.toInt()}×${t.toInt()}",
-              pitch: Double = 2.5 * (holeDia - 2), endDist: Double = 1.7 * holeDia, gauge: Double = 0.55 * b): SteelResult {
+              pitch: Double = 2.5 * (holeDia - 2), endDist: Double = 1.7 * holeDia, gauge: Double = 0.55 * b,
+              slenderLimit: Double = 180.0): SteelResult {
         val p = props(b, d, t)
         val eps = sqrt(250.0 / g.fy)
         val checks = ArrayList<DesignCheck>(); val steps = ArrayList<String>()
@@ -99,7 +100,8 @@ object AngleDesign {
             checks += DesignCheck("Compression (single angle)", String.format(java.util.Locale.US, "P = %.1f kN", compression), String.format(java.util.Locale.US, "≤ Pd = %.1f kN", pd),
                 if (compression <= pd) Status.PASS else Status.FAIL, "IS 800:2007 Cl. 7.5.1.2")
             val klr = length / p.rvv
-            checks += DesignCheck("Slenderness (compression)", String.format(java.util.Locale.US, "L/rvv %.0f", klr), "≤ 180", if (klr <= 180) Status.PASS else Status.FAIL, "IS 800:2007 Table 3")
+            checks += DesignCheck("Slenderness (compression)", String.format(java.util.Locale.US, "L/rvv %.0f", klr), "≤ ${slenderLimit.toInt()}${if (slenderLimit > 180) " (compression from wind reversal only)" else ""}",
+                if (klr <= slenderLimit) Status.PASS else Status.FAIL, "IS 800:2007 Table 3")
             util = max(util, compression / pd); if (cap == 0.0 || compression / pd >= util - 1e-12) cap = pd
         }
         if (tension <= 0 && compression <= 0) steps += "No axial force"
