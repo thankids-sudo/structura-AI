@@ -176,6 +176,13 @@ object RoofTruss {
         )
         steps += "Combinations (IS 800 Table 4): ${combos.joinToString { it.name }}; self-weight of the truss included in DL"
 
+        // split webs into struts and ties by their force under gravity (different slenderness limits and sizes)
+        run {
+            val webs = groupsMap["Web"] ?: return@run
+            val r0 = FrameSolver.analyse(model, combos.first())
+            val (struts, ties) = webs.partition { r0.internalForces(it, 2)[1].n < 0 }
+            groupsMap = (groupsMap - "Web") + listOf("Web — struts" to struts, "Web — ties" to ties).filter { it.second.isNotEmpty() }
+        }
         // design loop: analyse → size groups → re-analyse with the chosen sections (self-weight changes)
         var groups = emptyList<Group>()
         var forces = emptyMap<Int, Pair<Double, Double>>()
@@ -292,7 +299,7 @@ object RoofTruss {
         for (mem in m.members) {
             val a = m.node(mem.i); val b = m.node(mem.j)
             val g = groups.firstOrNull { mem.id in it.members }?.name
-            lines += ReportDoc.FLine(a.x, a.z, b.x, b.z, if (g == "Web") 1 else 2)
+            lines += ReportDoc.FLine(a.x, a.z, b.x, b.z, if (g?.startsWith("Web") == true) 1 else 2)
             txt += ReportDoc.FText((a.x + b.x) / 2, (a.z + b.z) / 2 + 0.12, "M${mem.id}", 5.5f)
         }
         for (n in m.nodes) txt += ReportDoc.FText(n.x, n.z - 0.35, "N${n.id}", 5.5f)

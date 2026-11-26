@@ -95,7 +95,8 @@ object ArchRoof {
             Node(k + 1, l / 2 + r * sin(a), 0.0, h - r + r * cos(a))
         }
         val mat = Material("Cold-formed fy ${f0(inp.fy)}", inp.e * 1000, inp.e * 1000 / 2.6, 78.5)
-        val sec = Section("Sheet ${f0(p.depth)}×${f2(p.t)}", gross.area * 1e-6, gross.i * 1e-12, gross.i * 1e-12 * 50, 1e-9, 1.0, p.depth / 1000, gross.area * 1e-6, gross.area * 1e-6)
+        val jt = gross.area * p.t * p.t / 3 * 1e-12                                  // thin-wall St Venant J per m (Σ b·t³/3)
+        val sec = Section("Sheet ${f0(p.depth)}×${f2(p.t)}", gross.area * 1e-6, gross.i * 1e-12, gross.i * 1e-12 * 50, jt, 1.0, p.depth / 1000, gross.area * 1e-6, gross.area * 1e-6)
         val members = (1..n).map { Member(it, it, it + 1, mat, sec) }
         val supports = listOf(Support(1, listOf(true, true, true, false, false, false)), Support(n + 1, listOf(true, true, true, false, false, false)))
         steps += "Arch: circular, R = ${f2(r)} m, half-angle ${f1(Math.toDegrees(half))}°, ${n} segments, two-pinned, 1 m wide strip (2D)"
@@ -138,7 +139,8 @@ object ArchRoof {
         var worst = 0.0; var worstCombo = ""; var lamMin = Double.MAX_VALUE
         val checks = ArrayList<DesignCheck>()
         for ((c, rr) in res) {
-            val lam = runCatching { Buckling.analyse(model, c, 2).lambda }.getOrDefault(Double.MAX_VALUE).let { if (it <= 0) Double.MAX_VALUE else it }
+            // λcr < 0 means this combination puts the arch in tension overall (no in-plane buckling under it)
+            val lam = runCatching { Buckling.analyse(model, c, 2).lambda }.getOrNull()?.let { if (it <= 0) Double.MAX_VALUE else it } ?: Double.MAX_VALUE
             lamMin = min(lamMin, lam)
             val amp = if (lam > 1.0) 1 / (1 - 1 / lam) else Double.POSITIVE_INFINITY
             var u = 0.0; var nAt = 0.0; var mAt = 0.0

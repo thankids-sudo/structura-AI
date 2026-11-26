@@ -82,7 +82,12 @@ object Buckling {
         for (s in mesh.supports) {
             val base = mesh.nodeIndex[s.node]!! * 6
             for (a in 0 until 6) if (s.restraints[a]) fixed[base + a] = true
+            s.springs?.let { ks -> for (a in 0 until 6) if (!s.restraints[a] && ks[a] > 0) k[base + a][base + a] += ks[a] }
         }
+        // same conventions as the linear solver: 2D plane models hold uy, φx, φz; stiffness-less rotations are held
+        if (mesh.planeXZ) for (i in mesh.nodes.indices) { fixed[i * 6 + 1] = true; fixed[i * 6 + 3] = true; fixed[i * 6 + 5] = true }
+        val maxDiag = (0 until nDof).maxOfOrNull { abs(k[it][it]) } ?: 1.0
+        for (d in 0 until nDof) if (d % 6 >= 3 && !fixed[d] && abs(k[d][d]) <= 1e-12 * maxDiag) fixed[d] = true
         val free = (0 until nDof).filter { !fixed[it] }.toIntArray()
         val n = free.size
         val a = Array(n) { r -> DoubleArray(n) { c -> k[free[r]][free[c]] } }
