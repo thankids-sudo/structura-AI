@@ -83,7 +83,7 @@ object ArchRoof {
         val eBot = props(p, p.crest, effectiveWidth(p.trough, p.t, inp.fy, inp.e))
         steps += "Profile: depth ${f0(p.depth)}, pitch ${f0(p.pitch)}, crest ${f0(p.crest)}, trough ${f0(p.trough)}, web ${f1(p.webLen)} mm, t ${f2(p.t)} mm"
         steps += "Gross per m: A = ${f0(gross.area)} mm², I = ${String.format(java.util.Locale.US, "%.3e", gross.i)} mm⁴, Ztop ${f0(gross.zTop)}, Zbot ${f0(gross.zBot)} mm³ (weight ${f3(gross.area * 1e-6 * 78.5)} kN/m²)"
-        steps += "Effective crest ${f1(effectiveWidth(p.crest, p.t, inp.fy, inp.e))} / trough ${f1(effectiveWidth(p.trough, p.t, inp.fy, inp.e))} mm (Winter, f = fy) → Aeff ${f0(min(eTop.area, eBot.area))} mm², Zeff ${f0(min(eTop.zTop, eTop.zBot, eBot.zTop, eBot.zBot))} mm³"
+        steps += "Effective crest ${f1(effectiveWidth(p.crest, p.t, inp.fy, inp.e))} / trough ${f1(effectiveWidth(p.trough, p.t, inp.fy, inp.e))} mm (Winter, f = fy) → Aeff ${f0(min(eTop.area, eBot.area))} mm², Zeff ${f0(minOf(eTop.zTop, eTop.zBot, eBot.zTop, eBot.zBot))} mm³"
 
         // arch geometry
         val l = inp.span; val h = inp.rise

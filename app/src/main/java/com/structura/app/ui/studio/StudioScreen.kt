@@ -178,6 +178,7 @@ fun StudioScreen(onBack: () -> Unit, onWizard: () -> Unit, onDesignBeam: () -> U
     fun commit(m: FrameModel, msg: String? = null) {
         history = (history.take(pos + 1) + m).takeLast(80)
         DesignSession.currentModel = m
+        com.structura.app.project.ProjectStore.save(context)
         pos = history.size - 1
         results = null; buckling = null; env = emptyList(); modal = null; seismic = null; seismicEnv = false; steel = emptyList(); aiReview = null
         if (view != ResultView.MODEL) view = ResultView.MODEL
