@@ -76,4 +76,5 @@ Each step is built, tested and committed separately.
 - [x] 6.8 Gusset Whitmore yield and block shear (IS 800 Cl. 6.2, 6.4.1); welded truss connections (Cl. 10.5.7); counterfort weight net of displaced fill
 - [x] 6.9 Workbench viewport: build-in and idle-spin animation, animated deflected shape after Analyse, view / combination chips, load-case filter, one-finger rotate, two-finger pan + zoom, double-tap fit
 - [x] 6.10 Animated 3D scene in every design module (core/viz Scene3D, WallScenes, RoofScenes; app SceneView): staged construction build-up, reinforcement, earth / base pressure, loads, dimensions; X-ray, layer toggles, section / plan views, full screen
+- [x] 6.11 Workbench: live auto-analysis with the animated deflected shape; Draw mode in the main space (Select, Node, Member, ½ Split, Fix, Pin, Load, UDL, Delete, undo / redo, work plane XY / XZ / YZ, snap 0.5–3 m)
 
