@@ -116,7 +116,7 @@ object ColumnDesigner {
         val ac = ag - asc
         val p = 100 * asc / ag
         steps += "$nBars-${inp.barDia.toInt()} φ: Asc = ${f1(asc)} mm² (${f2(p)} %)"
-        checks += DesignCheck("Longitudinal steel", "${f2(p)} %", "0.8 % ≤ p ≤ 4 % (6 % absolute)", if (p >= 0.8 && p <= 4.0) Status.PASS else if (p <= 6.0) Status.INFO else Status.FAIL, IS456.ref("Cl. 26.5.3.1(a),(b)"))
+        checks += DesignCheck("Longitudinal steel", "${f2(p)} %", "0.8 % ≤ p ≤ 4 % (6 % absolute)", when { p < 0.8 -> Status.FAIL; p <= 4.0 -> Status.PASS; p <= 6.0 -> Status.INFO; else -> Status.FAIL }, IS456.ref("Cl. 26.5.3.1(a),(b)"))
         checks += DesignCheck("Number of bars", "$nBars", "≥ 4 (rectangular)", if (nBars >= 4) Status.PASS else Status.FAIL, IS456.ref("Cl. 26.5.3.1(c)"))
         checks += DesignCheck("Bar diameter", "${inp.barDia.toInt()} mm", "≥ 12 mm", if (inp.barDia >= 12) Status.PASS else Status.FAIL, IS456.ref("Cl. 26.5.3.1(d)"))
 

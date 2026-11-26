@@ -56,6 +56,7 @@ class ModelOpsTest {
         assertTrue(beam.muHog > 10)                                     // portal beam: hogging at the knees
         assertTrue(beam.checks.any { it.item.startsWith("Hogging") } && beam.checks.any { it.clause.contains("26.2.1") })
         assertTrue(d.filter { it.kind == "Column" }.all { c -> c.checks.any { it.item == "Biaxial interaction" } })
+        assertTrue(d.filter { it.kind == "Column" }.all { c -> c.checks.first { it.item == "Longitudinal steel" }.status == com.structura.core.rcc.Status.PASS })
         val v = Validation.run(m, res, d, emptyList())
         println("validation: ${v.errors} errors, ${v.warnings} warnings; " + v.items.joinToString(" | ") { it.topic })
         assertTrue(v.items.isNotEmpty())
