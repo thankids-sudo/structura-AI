@@ -149,8 +149,10 @@ object FootingDesigner {
         checks += DesignCheck("Minimum edge depth", "${f1(depth)} mm", "≥ 150 mm", if (depth >= 150) Status.PASS else Status.FAIL, IS456.ref("Cl. 34.1.2"))
 
         val a = PI * inp.barDia * inp.barDia / 4
-        val nL = max(ceil(astL / a).toInt(), 2)
-        var nB = max(ceil(astB / a).toInt(), 2)
+        val sLim = min(3 * d, 300.0)
+        // bars for the area, and at least enough for the spacing limit (Cl. 26.3.3(b))
+        val nL = maxOf(ceil(astL / a).toInt(), ceil((B - 2 * inp.clearCover - inp.barDia) / sLim).toInt() + 1, 2)
+        var nB = maxOf(ceil(astB / a).toInt(), ceil((L - 2 * inp.clearCover - inp.barDia) / sLim).toInt() + 1, 2)
         // central band (bars ∥ B, i.e. in the short direction) for rectangular footings
         val ratio = L / B
         val band = if (ratio > 1.0) ceil(nB * 2 / (ratio + 1)).toInt() else nB
@@ -162,8 +164,11 @@ object FootingDesigner {
         // development length
         val ld = inp.barDia * 0.87 * inp.fy / (4 * tauBd(inp.fck))
         val avail = min(cl, cb) - inp.clearCover
-        checks += DesignCheck("Development length", "available ${f1(avail)} mm", "≥ Ld = φ·σs/(4·τbd) = ${f1(ld)} mm",
-            if (avail >= ld) Status.PASS else Status.FAIL, IS456.ref("Cl. 26.2.1, 34.2.4.3") + if (avail < ld) " — provide 90° bends at the ends" else "")
+        // a 90° bend at the bar end adds 8φ (Cl. 26.2.2.1(b): 4φ per 45°) plus the straight vertical leg
+        val withBend = avail + 8 * inp.barDia + (depth - 2 * inp.clearCover - 2 * inp.barDia).coerceAtLeast(0.0)
+        checks += if (avail >= ld) DesignCheck("Development length", "available ${f1(avail)} mm (straight)", "≥ Ld = φ·σs/(4·τbd) = ${f1(ld)} mm", Status.PASS, IS456.ref("Cl. 26.2.1, 34.2.4.3"))
+        else DesignCheck("Development length", "straight ${f1(avail)} + 90° bend 8φ + leg = ${f1(withBend)} mm", "≥ Ld ${f1(ld)} mm — bend the bars up at the ends",
+            if (withBend >= ld) Status.PASS else Status.FAIL, IS456.ref("Cl. 26.2.1, 26.2.2.1(b), 34.2.4.3"))
         steps += "Bars ∥ L: ${nL}-${inp.barDia.toInt()} φ (${f1(astL)} mm² req.); bars ∥ B: ${nB}-${inp.barDia.toInt()} φ (${f1(astB)} mm² req.)"
         if (hasMoment) checks += DesignCheck("Punching with moment", "average qu used", "moment transfer by shear not added — check Cl. 31.6.2.2 if Mu is large", Status.INFO, IS456.ref("Cl. 31.6.2.2"))
         return FootingResult(L, B, depth, d, qu, astL, astB, nL, nB, sL, sB, band, qmaxS, qminS, checks, steps)

@@ -63,6 +63,10 @@ class FoundationsImportTest {
         val stp = FoundationDesign.isolated(1, FootingType.STEPPED, 800.0, 1200.0, 0.0, 0.0, 300.0, 450.0, 200.0, 25.0, 500.0, 0.0, 0.0)
         println(pad.summary); println(sl.summary); println(stp.summary)
         assertTrue(sl.concrete < pad.concrete && stp.concrete < pad.concrete)
+        assertTrue("plan in metres: ${pad.l}", pad.l in 1.0..4.0 && pad.b in 1.0..4.0)
+        assertTrue(pad.checks.filter { it.status == com.structura.core.rcc.Status.FAIL }.joinToString { it.item }, pad.ok)
+        assertTrue(sl.checks.filter { it.status == com.structura.core.rcc.Status.FAIL }.joinToString { it.item + " " + it.value }, sl.ok)
+        assertTrue(stp.checks.filter { it.status == com.structura.core.rcc.Status.FAIL }.joinToString { it.item + " " + it.value }, stp.ok)
         assertTrue(sl.edge >= 150)
         val cb = FoundationDesign.combined(1, 2, 700.0, 900.0, 1050.0, 1350.0, 0.0, 0.0, 3.0, 0.0, 400.0 to 400.0, 450.0 to 450.0, 200.0, 25.0, 500.0)
         println(cb.summary); cb.steps.forEach { println("  $it") }
@@ -100,5 +104,6 @@ class FoundationsImportTest {
         val doc = ProjectReport.build(m, res, rcc, emptyList(), f, v)
         assertTrue(doc.blocks.size > 20)
         println("report blocks ${doc.blocks.size}; footings: " + f.joinToString(" | ") { it.summary })
+        f.forEach { ft -> assertTrue("N${ft.node}: " + ft.checks.filter { it.status == com.structura.core.rcc.Status.FAIL }.joinToString { it.item + " " + it.value }, ft.ok) }
     }
 }

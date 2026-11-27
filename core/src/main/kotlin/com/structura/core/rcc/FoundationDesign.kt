@@ -39,7 +39,7 @@ object FoundationDesign {
         val pad = FootingDesigner.design(FootingInput(serviceLoad = max(p, 1.0), factoredLoad = max(pu, 1.5), colB = colB, colD = colD, sbc = sbc,
             fck = fck, fy = fy, barDia = dia, momentL = ml, momentB = mb, factoredMomentL = 1.5 * ml, factoredMomentB = 1.5 * mb))
         val checks = ArrayList(pad.checks); val steps = ArrayList(pad.steps)
-        val dd = pad.depth; val l = pad.lengthL; val b = pad.widthB
+        val dd = pad.depth; val l = pad.lengthL / 1000; val b = pad.widthB / 1000          // FootingResult L, B are in mm
         var edge = dd
         var vol = l * b * dd / 1000
         if (type == FootingType.SLOPED || type == FootingType.STEPPED) {
