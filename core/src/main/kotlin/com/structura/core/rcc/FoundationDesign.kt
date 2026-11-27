@@ -46,17 +46,23 @@ object FoundationDesign {
             val qu = pad.qu
             val lc = colD / 1000 + 0.15; val bc = colB / 1000 + 0.15             // 75 mm offset round the column
             if (type == FootingType.SLOPED) {
-                edge = max(150.0, ceil(dd / 3 / 25) * 25)
-                // one-way shear at d from the column face, with the depth there (linear slope from the offset to the edge)
-                fun dAt(dist: Double, proj: Double) = (edge + (dd - edge) * (1 - (dist / proj).coerceIn(0.0, 1.0))) - 50 - dia
-                for ((name, span, width) in listOf(Triple("∥ L", (l - colD / 1000) / 2, b), Triple("∥ B", (b - colB / 1000) / 2, l))) {
-                    val dSec = dAt(pad.d / 1000, span)
-                    val vu = qu * width * max(0.0, span - pad.d / 1000)
-                    val tv = vu * 1000 / (width * 1000 * dSec)
-                    val pt = 100 * (if (name == "∥ L") pad.astL else pad.astB) / (width * 1000 * dSec)
-                    val tc = IS456.tauC(pt, fck)
-                    checks += DesignCheck("One-way shear $name (sloped)", "τv ${f3(tv)} MPa at d = ${f0(dSec)} mm", "≤ τc ${f3(tc)} MPa", if (tv <= tc) Status.PASS else Status.FAIL, IS456.ref("Cl. 34.2.4.1(a), 40.2"))
+                // edge depth: start at max(150, D/3) and thicken until one-way shear at d from the face passes with the reduced depth
+                fun shearChecks(e: Double): List<DesignCheck> {
+                    fun dAt(dist: Double, proj: Double) = (e + (dd - e) * (1 - (dist / proj).coerceIn(0.0, 1.0))) - 50 - dia
+                    return listOf(Triple("∥ L", (l - colD / 1000) / 2, b), Triple("∥ B", (b - colB / 1000) / 2, l)).map { (name, span, width) ->
+                        val dSec = dAt(pad.d / 1000, span)
+                        val vu = qu * width * max(0.0, span - pad.d / 1000)
+                        val tv = vu * 1000 / (width * 1000 * dSec)
+                        val pt = 100 * (if (name == "∥ L") pad.astL else pad.astB) / (width * 1000 * dSec)
+                        val tc = IS456.tauC(pt, fck)
+                        DesignCheck("One-way shear $name (sloped)", "τv ${f3(tv)} MPa at d = ${f0(dSec)} mm", "≤ τc ${f3(tc)} MPa", if (tv <= tc) Status.PASS else Status.FAIL, IS456.ref("Cl. 34.2.4.1(a), 40.2"))
+                    }
                 }
+                edge = max(150.0, ceil(dd / 3 / 25) * 25)
+                var sc = shearChecks(edge)
+                while (sc.any { it.status == Status.FAIL } && edge < dd) { edge = min(dd, edge + 25); sc = shearChecks(edge) }
+                if (edge > max(150.0, ceil(dd / 3 / 25) * 25)) steps += "Edge thickened to ${f0(edge)} mm so that one-way shear at d from the column face passes with the reduced depth"
+                checks += sc
                 checks += DesignCheck("Edge thickness", "${f0(edge)} mm", "≥ 150 mm (on soils)", if (edge >= 150) Status.PASS else Status.FAIL, IS456.ref("Cl. 34.1.2"))
                 checks += DesignCheck("Slope of top", "1 in ${f1((min(l - lc, b - bc) / 2) / ((dd - edge) / 1000))}", "flatter than 1 V : 1.5 H so it can be cast without top shuttering",
                     if ((min(l - lc, b - bc) / 2) / ((dd - edge) / 1000) >= 1.5) Status.PASS else Status.INFO, "practice")
