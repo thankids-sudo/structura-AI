@@ -18,7 +18,7 @@ object Validation {
     }
 
     fun run(model: FrameModel, results: List<Pair<LoadCombination, FrameResults>>, rcc: List<RccModelDesign.MemberDesign>,
-            steel: List<SteelModelCheck.MemberCheck>): Report {
+            steel: List<SteelModelCheck.MemberCheck>, footings: List<com.structura.core.rcc.FoundationDesign.Result> = emptyList()): Report {
         val items = ArrayList<Item>()
         val review = ResultCheck.review(model, results)
         for (f in review.findings) items += Item(
@@ -27,11 +27,12 @@ object Validation {
         )
         for (d in rcc) for (c in d.checks) if (c.status == Status.FAIL) items += Item(Level.ERROR, "${d.kind} M${d.member}", "${c.item}: ${c.value} — ${c.requirement}", c.clause, d.member)
         for (s in steel) for (c in s.result.checks) if (c.status == Status.FAIL) items += Item(Level.ERROR, "Steel M${s.member}", "${c.item}: ${c.value} — ${c.requirement}", c.clause, s.member)
+        for (f in footings) for (c in f.checks) if (c.status == Status.FAIL) items += Item(Level.ERROR, "Footing N${f.node}", "${c.item}: ${c.value} — ${c.requirement}", c.clause, node = f.node)
         val designed = rcc.map { it.member }.toSet() + steel.map { it.member }
         val undesigned = model.members.filter { it.id !in designed }
         if (undesigned.isNotEmpty()) items += Item(Level.INFO, "Not designed", "${undesigned.size} member(s) have no design: " +
             undesigned.take(12).joinToString { "M${it.id} ${it.section.name}" } + " — use a rectangular RCC section (M-grade) or an IS 808 / hollow steel section.", "")
-        if (rcc.isNotEmpty() && rcc.all { it.ok } && steel.all { it.ok }) items += Item(Level.OK, "Member design", "All ${rcc.size + steel.size} designed members satisfy their checks.", "IS 456 · IS 800")
+        if (rcc.isNotEmpty() && rcc.all { it.ok } && steel.all { it.ok } && footings.all { it.ok }) items += Item(Level.OK, "Member design", "All ${rcc.size + steel.size} designed members satisfy their checks.", "IS 456 · IS 800")
         return Report(items.sortedBy { it.level.ordinal })
     }
 }

@@ -410,6 +410,10 @@ data class FrameModel(
     val panels: List<Panel> = emptyList(),
     /** 2D plane frame / truss in the global XZ plane (STAAD PLANE): uy, φx, φz held at every node. */
     val planeXZ: Boolean = false,
+    /** Design role per member id (plinth beam, ground / tie beam, lintel …); absent = automatic (beam / column by direction). */
+    val roles: Map<Int, MemberRole> = emptyMap(),
+    /** Foundation per support node id (isolated pad / sloped, combined with a partner node). */
+    val footings: Map<Int, FootingSpec> = emptyMap(),
 ) {
     /** Load cases present in this model (DL is always present when self-weight is on). */
     val loadCases: Set<String>
@@ -435,3 +439,17 @@ data class FrameModel(
     val nodeIndex: Map<Int, Int> = nodes.withIndex().associate { (k, n) -> n.id to k }
     fun node(id: Int): Node = nodes[nodeIndex[id] ?: error("Node $id not found")]
 }
+
+
+/** Design role of a member — decides the design routine and the extra code checks. */
+enum class MemberRole(val label: String) {
+    AUTO("Auto"), BEAM("Beam"), COLUMN("Column"), PLINTH_BEAM("Plinth beam"), GROUND_BEAM("Ground / tie beam"), LINTEL("Lintel"),
+}
+
+/** Footing types available at a support. */
+enum class FootingType(val label: String) {
+    PAD("Isolated pad"), SLOPED("Isolated sloped"), STEPPED("Isolated stepped"), COMBINED("Combined (two columns)"),
+}
+
+/** Foundation at a support node; [partner] is the second column node of a combined footing. */
+data class FootingSpec(val type: FootingType = FootingType.PAD, val sbc: Double = 200.0, val partner: Int? = null, val depthBelow: Double = 1.5)

@@ -16,6 +16,7 @@ import com.structura.core.fem.ModelOps
 import com.structura.core.fem.ModelEditor
 import com.structura.core.fem.RccModelDesign
 import com.structura.core.fem.Validation
+import com.structura.core.viz.ModelScenes
 import com.structura.core.fem.LoadCase
 import com.structura.core.fem.LoadDir
 import com.structura.core.fem.Vec3
@@ -194,6 +195,14 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
     var combo by remember(model) { mutableStateOf(0) }
     // ---- design + validation ----
     var rcc by remember(model) { mutableStateOf<List<RccModelDesign.MemberDesign>?>(null) }
+    var footings by remember(model) { mutableStateOf<List<com.structura.core.rcc.FoundationDesign.Result>>(emptyList()) }
+    var solid by remember { mutableStateOf(false) }
+    var annLevel by remember { mutableStateOf(1) }                 // 0 none · 1 node + member numbers · 2 + sections
+    var dims by remember { mutableStateOf(true) }
+    var ucs by remember { mutableStateOf(Vec3(0.0, 0.0, 0.0)) }
+    var wallMode by remember { mutableStateOf(false) }
+    var wallT by remember { mutableStateOf("230") }
+    var wallH by remember { mutableStateOf("3.0") }
     var steel by remember(model) { mutableStateOf<List<SteelModelCheck.MemberCheck>>(emptyList()) }
     var validation by remember(model) { mutableStateOf<Validation.Report?>(null) }
     var showValidation by remember { mutableStateOf(false) }
@@ -244,10 +253,11 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
         scope.launch {
             try {
                 val (r, s) = withContext(Dispatchers.Default) { RccModelDesign.design(model, res) to SteelModelCheck.check(model, res) }
-                rcc = r; steel = s
-                validation = withContext(Dispatchers.Default) { Validation.run(model, res, r, s) }
-                val bad = r.count { !it.ok } + s.count { !it.ok }
-                status = "Designed ${r.count { it.kind == "Beam" }} beams, ${r.count { it.kind != "Beam" }} columns, ${s.size} steel — " + if (bad == 0) "all ✔" else "$bad ✘"
+                val f = withContext(Dispatchers.Default) { RccModelDesign.designFootings(model, res) }
+                rcc = r; steel = s; footings = f
+                validation = withContext(Dispatchers.Default) { Validation.run(model, res, r, s, f) }
+                val bad = r.count { !it.ok } + s.count { !it.ok } + f.count { !it.ok }
+                status = "Designed ${r.count { it.kind != "Column" && it.kind != "Raking" }} beams, ${r.count { it.kind == "Column" || it.kind == "Raking" }} columns, ${s.size} steel, ${f.size} footings — " + if (bad == 0) "all ✔" else "$bad ✘"
             } catch (e: Exception) { status = "Design: ${e.message}" } finally { busy = false }
         }
     }
@@ -258,10 +268,17 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
         busy = true
         scope.launch {
             try {
+                status = "Preparing the full report…"
                 val doc = withContext(Dispatchers.Default) {
-                    com.structura.core.fem.FemReportDoc.build(model, res, SteelModelCheck.check(model, res), ResultCheck.review(model, res))
+                    val r = rcc ?: RccModelDesign.design(model, res)
+                    val st = SteelModelCheck.check(model, res)
+                    val f = RccModelDesign.designFootings(model, res)
+                    val v = Validation.run(model, res, r, st, f)
+                    com.structura.core.fem.ProjectReport.build(model, res, r, st, f, v,
+                        com.structura.app.project.ProjectStore.current?.name ?: model.title, com.structura.app.project.ProjectStore.current?.engineer ?: "")
                 }
                 com.structura.app.report.PdfExport.share(context, doc)
+                status = "Report ready — ${doc.blocks.size} sections"
             } catch (e: Exception) { status = "Report: ${e.message}" } finally { busy = false }
         }
     }
@@ -316,7 +333,10 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
             Mode.EDIT -> onEditTap(t)
             Mode.LOADS -> {
                 val v = num(loadVal)
-                if (onMembers) t.member?.let { id -> commit(ModelEditor.addMemberUdl(model, id, LoadDir.GLOBAL_Z, v * Units.udl, loadCase), "$loadCase UDL ${fmt1(v)} on M$id") }
+                if (wallMode) t.member?.let { id -> commit(ModelOps.addWallLoad(model, setOf(id), num(wallT) / 1000, num(wallH)),
+                    "Wall ${wallT} mm × ${wallH} m on M$id" + if (model.roles[id] == com.structura.core.fem.MemberRole.LINTEL) " (lintel: 60° triangle)" else "") }
+                    ?: run { status = "Tap a beam to put the wall on it" }
+                else if (onMembers) t.member?.let { id -> commit(ModelEditor.addMemberUdl(model, id, LoadDir.GLOBAL_Z, v * Units.udl, loadCase), "$loadCase UDL ${fmt1(v)} on M$id") }
                     ?: run { status = "Tap a member to add the UDL" }
                 else t.node?.let { id -> commit(ModelEditor.addNodalLoad(model, id, Vec3(0.0, 0.0, v * Units.force), loadCase), "$loadCase ${fmt1(v)} at N$id") }
                     ?: run { status = "Tap a node to add the load" }
@@ -331,6 +351,17 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
     val shown = results?.getOrNull(combo)
     val util: Map<Int, Double>? = if (mode == Mode.DESIGN && rcc != null) (rcc!!.associate { it.member to it.utilisation } + steel.associate { it.member to it.utilisation }) else null
 
+    val importer = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) runCatching {
+            val text = context.contentResolver.openInputStream(uri)!!.bufferedReader().readText()
+            val (m, note) = when {
+                text.trimStart().startsWith("{") -> com.structura.app.ui.studio.ProjectJson.read(text) to "Structura project"
+                text.uppercase().contains("JOINT COORD") -> com.structura.core.fem.StaadImport.read(text).let { it.model to it.notes.joinToString("; ") }
+                else -> error("Not a STAAD .std or Structura .json file — DXF plans: menu → Drawing → Structure")
+            }
+            commit(m, "Imported: $note"); mode = Mode.MODEL; camera.iso(); inspM = null; inspN = null
+        }.onFailure { status = "Import failed: ${it.message}" }
+    }
     Column(Modifier.fillMaxSize().background(Paper).statusBarsPadding().navigationBarsPadding()) {
         // ---------------- top bar
         Row(Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -340,13 +371,17 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
                 Text((com.structura.app.project.ProjectStore.current?.name ?: model.title) + "  ▾", color = InkB, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1)
                 Text("${model.members.size} members · ${model.nodes.size} nodes · ${model.supports.size} supports · ${model.loadCases.joinToString(" ")}", color = Grey, fontSize = 11.sp, maxLines = 1)
             }
+            Pill(if (busy) "…" else "Report", true) { if (!busy) report() }
+            Spacer(Modifier.width(6.dp))
             Pill(if (Units.imperial) "ft·kip" else "m·kN", false) { Units.set(context, !Units.imperial) }
             Spacer(Modifier.width(6.dp))
             Box {
                 Pill("⋯", false) { menu = true }
                 DropdownMenu(menu, { menu = false }) {
                     DropdownMenuItem({ Text("Projects") }, { menu = false; onOpen(Routes.PROJECTS) })
-                    DropdownMenuItem({ Text("PDF report (analysis + design)") }, { menu = false; report() })
+                    DropdownMenuItem({ Text("Full report — analysis, all members, footings (PDF)") }, { menu = false; report() })
+                    DropdownMenuItem({ Text("Import STAAD .std / Structura .json") }, { menu = false; importer.launch("*/*") })
+                    DropdownMenuItem({ Text("Import DXF / PDF / photo plan → structure") }, { menu = false; onOpen(Routes.PLAN) })
                     DropdownMenuItem({ Text("Validation list") }, { menu = false; if (validation == null) { mode = Mode.DESIGN }; showValidation = true })
                     DropdownMenuItem({ Text("3D Studio (panels, floor loads, modal, buckling)") }, { menu = false; onOpen(Routes.STUDIO) })
                     DropdownMenuItem({ Text("Frame wizard / templates") }, { menu = false; onOpen(Routes.FEM) })
@@ -372,34 +407,43 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
         // ---------------- canvas
         Box(Modifier.weight(1f).fillMaxWidth()) {
             val analyse = mode == Mode.ANALYSE
-            FrameView3D(
+            val wpOff = when (plane) { Plane.XY -> ucs.z; Plane.XZ -> ucs.y; Plane.YZ -> ucs.x }
+            if (solid) {
+                val scene = remember(model, rcc, footings) { ModelScenes.build(model, rcc, footings) }
+                com.structura.app.ui.viz.SceneView(scene, Modifier.fillMaxSize().padding(top = 0.dp, end = 52.dp), mono = true)
+            } else FrameView3D(
                 model, if (analyse) shown?.second else null, if (analyse) view else ResultView.MODEL, Modifier.fillMaxSize(), animate = true, camera = camera,
                 memberUtil = util, dark = false, mono = true,
                 loadCase = if (mode == Mode.LOADS) loadCase else "", reveal = reveal.value,
                 doubleTapFit = mode != Mode.EDIT && mode != Mode.LOADS, onTouch = { hint = false },
-                workPlane = if (mode == Mode.EDIT) WorkPlane(plane, 0.0, snap, visible = true) else null,
+                workPlane = if (mode == Mode.EDIT) WorkPlane(plane, wpOff, snap, visible = true) else null,
                 onTap = { onTap(it) },
                 selectedNode = inspN, selectedMember = inspM, pendingNode = pending,
                 selectedNodes = sel.nodes, selectedMembers = sel.members,
+                annotations = com.structura.app.ui.fem.Annotations(nodeIds = annLevel >= 1, memberIds = annLevel >= 1, sections = annLevel >= 2,
+                    dimensions = dims, ucs = true, ucsOrigin = ucs),
             )
             // caption
             val caption = when (mode) {
                 Mode.MODEL -> "Tap a member or node to inspect"
                 Mode.EDIT -> tool.hint
-                Mode.LOADS -> "Case $loadCase · tap ${if (onMembers) "members for a UDL" else "nodes for a load"}"
+                Mode.LOADS -> if (wallMode) "Tap beams to place a ${wallT} mm wall, ${wallH} m high (DL)" else "Case $loadCase · tap ${if (onMembers) "members for a UDL" else "nodes for a load"}"
                 Mode.ANALYSE -> analysisError ?: shown?.let { (c, r) -> "${view.label} · ${c.name}" + if (view == ResultView.DEFORMED) " · δmax ${fmt1(max(r.maxDisplacement().second, r.maxMemberDeflection()) * 1000)} mm" else "" } ?: "Analysing…"
                 Mode.DESIGN -> if (busy) "Designing…" else rcc?.let { "Line weight = utilisation η · ✘ = fails · tap a member" } ?: (analysisError ?: "Analysing…")
             }
-            Text(caption, color = InkB, fontSize = 12.sp, maxLines = 2, modifier = Modifier.align(Alignment.TopStart).padding(start = if (mode == Mode.MODEL) 64.dp else 12.dp, top = 8.dp, end = 64.dp)
+            if (!solid) Text(caption, color = InkB, fontSize = 12.sp, maxLines = 2, modifier = Modifier.align(Alignment.TopStart).padding(start = if (mode == Mode.MODEL) 64.dp else 12.dp, top = 8.dp, end = 64.dp)
                 .background(Paper.copy(alpha = 0.85f)).padding(horizontal = 4.dp, vertical = 2.dp))
             // view buttons
             Column(Modifier.align(Alignment.TopEnd).padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Square("3D") { camera.iso() }; Square("XY") { camera.top(); if (mode == Mode.EDIT) plane = Plane.XY }
                 Square("XZ") { camera.front(); if (mode == Mode.EDIT) plane = Plane.XZ }; Square("YZ") { camera.right(); if (mode == Mode.EDIT) plane = Plane.YZ }
                 Square("⤢") { camera.fit() }
+                Square(when (annLevel) { 0 -> "Aa"; 1 -> "N/M"; else -> "Sec" }) { annLevel = (annLevel + 1) % 3 }
+                Square(if (dims) "↔✓" else "↔") { dims = !dims }
+                Square(if (solid) "▣✓" else "▣") { solid = !solid; if (solid && rcc == null && results != null) runDesign() }
             }
             // phase rail (model mode)
-            if (mode == Mode.MODEL) Column(Modifier.align(Alignment.CenterStart).padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (mode == Mode.MODEL && !solid) Column(Modifier.align(Alignment.CenterStart).padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Phase.entries.forEach { p -> RailButton(p, sheet == p) { sheet = p } }
             }
             androidx.compose.animation.AnimatedVisibility(hint && mode == Mode.MODEL, Modifier.align(Alignment.Center).padding(horizontal = 70.dp),
@@ -408,7 +452,7 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
                     modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(InkB.copy(alpha = 0.85f)).padding(horizontal = 12.dp, vertical = 6.dp))
             }
             // contextual tool strip
-            Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(8.dp).clip(RoundedCornerShape(12.dp))
+            if (!solid) Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(8.dp).clip(RoundedCornerShape(12.dp))
                 .background(Paper.copy(alpha = 0.96f)).border(BorderStroke(1.dp, Hair), RoundedCornerShape(12.dp)).padding(vertical = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 when (mode) {
@@ -453,15 +497,26 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
                             Plane.entries.forEach { pl -> Pill("Plane ${pl.name}", plane == pl) {
                                 plane = pl; when (pl) { Plane.XY -> camera.top(); Plane.XZ -> camera.front(); Plane.YZ -> camera.right() } } }
                             listOf(0.5, 1.0, 1.5, 3.0).forEach { sn -> Pill("$sn m", snap == sn) { snap = sn } }
+                            Pill("UCS @ node", false) {
+                                val n = sel.nodes.firstOrNull() ?: pending ?: inspN
+                                if (n == null) status = "Select a node first (Select tool)" else { ucs = model.node(n).pos; status = "UCS origin at N$n — the work plane passes through it" }
+                            }
+                            Pill("UCS world", ucs == Vec3(0.0, 0.0, 0.0)) { ucs = Vec3(0.0, 0.0, 0.0); status = "UCS = world origin" }
                         }
                     }
                     Mode.LOADS -> {
                         Strip {
-                            Pill("UDL on members", onMembers) { onMembers = true }
-                            Pill("Load at nodes", !onMembers) { onMembers = false }
+                            Pill("UDL on members", onMembers && !wallMode) { onMembers = true; wallMode = false }
+                            Pill("Load at nodes", !onMembers && !wallMode) { onMembers = false; wallMode = false }
+                            Pill("🧱 Wall on beams", wallMode) { wallMode = true }
                             listOf(LoadCase.DL, LoadCase.LL, LoadCase.WL).forEach { c -> Pill(c, loadCase == c) { loadCase = c } }
                             NumberBox(loadVal) { loadVal = it }
                             Text(if (onMembers) (if (Units.imperial) "kip/ft" else "kN/m") else (if (Units.imperial) "kip" else "kN"), color = Grey, fontSize = 11.sp)
+                        }
+                        if (wallMode) Strip {
+                            Text("t (mm)", color = Grey, fontSize = 11.sp); NumberBox(wallT) { wallT = it }
+                            Text("h (m)", color = Grey, fontSize = 11.sp); NumberBox(wallH) { wallH = it }
+                            Text("γ 20 kN/m³ brick · lintels get the 60° triangle", color = Grey, fontSize = 11.sp)
                         }
                         Strip {
                             Pill(if (model.selfWeight) "Self-weight ✓" else "Self-weight ✗", model.selfWeight) { commit(model.copy(selfWeight = !model.selfWeight), "Self-weight ${if (!model.selfWeight) "on" else "off"} (IS 875-1)") }
@@ -504,11 +559,16 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
             }
             if (im != null) {
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("Properties", "Forces", "Design").forEachIndexed { k, t -> Pill(t, inspTab == k) { inspTab = k; if (k == 2 && rcc == null) runDesign() } }
+                    listOf("Properties", "Forces", "Design", "3D").forEachIndexed { k, t -> Pill(t, inspTab == k) { inspTab = k; if (k >= 2 && rcc == null) runDesign() } }
                 }
                 Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     when (inspTab) {
                         0 -> {
+                            Strip(pad = false) {
+                                Text("Role", color = Grey, fontSize = 12.sp)
+                                com.structura.core.fem.MemberRole.entries.forEach { r -> Pill(r.label, (model.roles[im.id] ?: com.structura.core.fem.MemberRole.AUTO) == r) {
+                                    commit(ModelOps.setRole(model, setOf(im.id), r), "M${im.id}: ${r.label}") } }
+                            }
                             Kv("Nodes", "N${im.i} → N${im.j}")
                             Kv("Section", "${im.section.name} (b ${fmt0(im.section.b * 1000)}, h ${fmt0(im.section.h * 1000)} mm, A ${fmt0(im.section.a * 1e6)} mm²)")
                             Kv("Material", "${im.material.name} · E ${fmt0(im.material.e / 1000)} MPa · γ ${fmt1(im.material.gamma)} kN/m³")
@@ -544,6 +604,13 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
                                     Kv("Max displacement (${c.name})", "${fmt1(d.indices.maxOf { (d[it] - z[it]).length } * 1000)} mm") }
                             }
                         }
+                        3 -> {
+                            if (rcc == null) Text(if (busy) "Designing…" else "Design not ready", color = Grey, fontSize = 12.sp)
+                            else {
+                                val scene = remember(model, rcc, footings, im.id) { ModelScenes.build(model, rcc, footings, setOf(im.id)) }
+                                com.structura.app.ui.viz.SceneView(scene, Modifier.fillMaxWidth().height(300.dp), mono = true)
+                            }
+                        }
                         else -> {
                             val rd = rcc?.firstOrNull { it.member == im.id }
                             val sd = steel.firstOrNull { it.member == im.id }
@@ -574,6 +641,22 @@ fun WorkbenchHome(onOpen: (String) -> Unit) {
                     Strip(pad = false) {
                         Text("Support", color = Grey, fontSize = 12.sp)
                         ModelEditor.SupportType.entries.forEach { t -> Pill(t.name.lowercase().replace('_', ' '), now == t) { commit(ModelEditor.setSupport(model, inode.id, t), "N${inode.id}: ${t.name.lowercase()}") } }
+                    }
+                    if (model.supports.any { it.node == inode.id }) {
+                        val spec = model.footings[inode.id] ?: com.structura.core.fem.FootingSpec()
+                        Strip(pad = false) {
+                            Text("Footing", color = Grey, fontSize = 12.sp)
+                            com.structura.core.fem.FootingType.entries.filter { it != com.structura.core.fem.FootingType.COMBINED }.forEach { t ->
+                                Pill(t.label.removePrefix("Isolated "), spec.type == t) { commit(ModelOps.setFootings(model, setOf(inode.id), spec.copy(type = t)), "N${inode.id}: ${t.label}") } }
+                            Pill("SBC ${fmt0(spec.sbc)}", false) { opSel = ModelOps.Sel(nodes = setOf(inode.id)); op = EditOp.FOOTING }
+                        }
+                        val fd = footings.firstOrNull { it.node == inode.id || it.partner == inode.id }
+                        if (fd != null) {
+                            Text(fd.summary, color = InkB, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            fd.checks.forEach { CheckRow(it) }
+                        } else Text(if (rcc == null) "Open Design to size the footing" else "—", color = Grey, fontSize = 12.sp)
+                        if (spec.type == com.structura.core.fem.FootingType.COMBINED) Kv("Combined with", "N${spec.partner}")
+                        Text("Combined footing: Edit → Select two support nodes → ▦ Footing → Combined", color = Grey, fontSize = 11.sp)
                     }
                     val nl = model.nodalLoads.filter { it.node == inode.id }
                     Kv("Loads", if (nl.isEmpty()) "none" else nl.joinToString { "${it.case} (${fmt1(it.values[0])}, ${fmt1(it.values[1])}, ${fmt1(it.values[2])}) kN" })
@@ -765,7 +848,8 @@ enum class DrawTool(val label: String, val hint: String) {
 /** Operations on the Workbench selection. */
 enum class EditOp(val label: String) {
     MOVE("⇄ Move"), COPY("⧉ Copy"), MIRROR("⇋ Mirror"), ROTATE("⟲ Rotate"), DELETE("🗑 Delete"), SECTION("▭ Section"),
-    RELEASE("◦ Releases"), SUPPORT("▲ Support"), LOAD("↓ Load"), SPLIT("⫶ Divide"), DESIGN("Design ✔")
+    ROLE("◫ Role"), RELEASE("◦ Releases"), SUPPORT("▲ Support"), FOOTING("▦ Footing"), LOAD("↓ Load"), WALL("🧱 Wall load"),
+    SPLIT("⫶ Divide"), DESIGN("Design ✔")
 }
 
 @Composable
@@ -787,6 +871,10 @@ private fun EditOpDialog(
     var sup by remember { mutableStateOf(com.structura.core.fem.ModelEditor.SupportType.FIXED) }
     var loadCase by remember { mutableStateOf("DL") }
     val spec = remember { com.structura.app.ui.studio.SectionSpec() }
+    var role by remember { mutableStateOf(com.structura.core.fem.MemberRole.PLINTH_BEAM) }
+    var fType by remember { mutableStateOf(sel.nodes.firstOrNull()?.let { model.footings[it]?.type } ?: com.structura.core.fem.FootingType.PAD) }
+    var sbc by remember { mutableStateOf(fmt0(sel.nodes.firstOrNull()?.let { model.footings[it]?.sbc } ?: 200.0)) }
+    var wt by remember { mutableStateOf("230") }; var wh by remember { mutableStateOf("3.0") }; var wg by remember { mutableStateOf("20") }; var wo by remember { mutableStateOf("0") }
     fun d(s: String) = s.replace(',', '.').toDoubleOrNull() ?: 0.0
     val lu = if (u.imperial) "ft" else "m"
     androidx.compose.material3.AlertDialog(
@@ -826,6 +914,23 @@ private fun EditOpDialog(
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("DL", "LL", "WL").forEach { k -> androidx.compose.material3.FilterChip(loadCase == k, { loadCase = k }, { Text(k) }) } }
                     }
                     EditOp.SPLIT -> num("Divide each member into n parts", n) { n = it }
+                    EditOp.ROLE -> {
+                        com.structura.core.fem.MemberRole.entries.forEach { r -> Row(verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.material3.RadioButton(role == r, { role = r }); Text(r.label) } }
+                        Text("Plinth / ground (tie) beams and lintels are designed as beams with their extra checks (tie force IS 1893-1 Cl. 7.12.1, lintel bearing and 60° masonry load).", fontSize = 12.sp)
+                    }
+                    EditOp.FOOTING -> {
+                        com.structura.core.fem.FootingType.entries.forEach { t -> Row(verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.material3.RadioButton(fType == t, { fType = t }); Text(t.label) } }
+                        num("Safe bearing capacity SBC (kN/m²)", sbc) { sbc = it }
+                        Text(if (fType == com.structura.core.fem.FootingType.COMBINED) "Combined: the first two selected support nodes share one rectangular footing (resultant at its centroid)."
+                            else "Applied to the selected support nodes; designed from the factored reactions (IS 456 Cl. 34).", fontSize = 12.sp)
+                    }
+                    EditOp.WALL -> {
+                        num("Wall thickness t (mm)", wt) { wt = it }; num("Wall height h (m)", wh) { wh = it }
+                        num("Unit weight γ (kN/m³) — brick 20, AAC 7, stone 24", wg) { wg = it }; num("Openings (%)", wo) { wo = it }
+                        Text("UDL = γ·t·h·(1 − openings) as DL on each selected beam; lintels get the triangular load inside 60°.", fontSize = 12.sp)
+                    }
                     else -> {}
                 }
             }
@@ -844,6 +949,10 @@ private fun EditOpDialog(
                         EditOp.SUPPORT -> onApply(O.setSupports(model, sel.nodes, sup), null, "${sup.name.lowercase()} supports at ${sel.nodes.size} nodes")
                         EditOp.LOAD -> if (sel.members.isNotEmpty()) onApply(O.addUdls(model, sel.members, d(cc) * u.udl, loadCase), null, "$loadCase UDL on ${sel.members.size} members")
                             else onApply(O.addNodalLoads(model, sel.nodes, com.structura.core.fem.Vec3(d(a) * u.force, d(b) * u.force, d(cc) * u.force), loadCase), null, "$loadCase load at ${sel.nodes.size} nodes")
+                        EditOp.ROLE -> onApply(O.setRole(model, sel.members, role), null, "${sel.members.size} member(s): ${role.label}")
+                        EditOp.FOOTING -> onApply(O.setFootings(model, sel.nodes, com.structura.core.fem.FootingSpec(fType, d(sbc).coerceAtLeast(20.0))), null,
+                            "${fType.label} at ${sel.nodes.count { n -> model.supports.any { it.node == n } }} support(s)")
+                        EditOp.WALL -> onApply(O.addWallLoad(model, sel.members, d(wt) / 1000, d(wh), d(wg), d(wo) / 100), null, "Wall load on ${sel.members.size} member(s)")
                         EditOp.SPLIT -> onApply(O.subdivide(model, sel.members, d(n).toInt().coerceIn(2, 20)), com.structura.core.fem.ModelOps.Sel(), "Divided into ${d(n).toInt()} parts")
                         else -> onDismiss()
                     }

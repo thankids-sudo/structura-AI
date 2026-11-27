@@ -53,6 +53,9 @@ object ProjectJson {
             JSONObject().put("id", it.id).put("nodes", JSONArray(it.nodes)).put("t", it.t).put("E", it.e).put("G", it.g)
                 .put("nu", it.nu).put("gamma", it.gamma).put("pressure", it.pressure).put("case", it.case).put("name", it.name)
         }))
+        o.put("roles", JSONObject().apply { m.roles.forEach { (k, v) -> put(k.toString(), v.name) } })
+        o.put("footings", JSONObject().apply { m.footings.forEach { (k, f) ->
+            put(k.toString(), JSONObject().put("type", f.type.name).put("sbc", f.sbc).put("depthBelow", f.depthBelow).apply { f.partner?.let { put("partner", it) } }) } })
         o.put("pointLoads", JSONArray(m.pointLoads.map {
             JSONObject().put("member", it.member).put("case", it.case).put("dir", it.dir.name).put("p", it.p).put("a", it.a)
         }))
@@ -88,6 +91,12 @@ object ProjectJson {
                     s.optJSONArray("inclination")?.let { k -> (0 until 3).map { k.getDouble(it) } })
             },
             planeXZ = o.optBoolean("planeXZ", false),
+            roles = o.optJSONObject("roles")?.let { r -> r.keys().asSequence().mapNotNull { k -> runCatching { k.toInt() to com.structura.core.fem.MemberRole.valueOf(r.getString(k)) }.getOrNull() }.toMap() } ?: emptyMap(),
+            footings = o.optJSONObject("footings")?.let { r -> r.keys().asSequence().mapNotNull { k -> runCatching {
+                val f = r.getJSONObject(k)
+                k.toInt() to com.structura.core.fem.FootingSpec(com.structura.core.fem.FootingType.valueOf(f.getString("type")), f.optDouble("sbc", 200.0),
+                    if (f.has("partner")) f.getInt("partner") else null, f.optDouble("depthBelow", 1.5))
+            }.getOrNull() }.toMap() } ?: emptyMap(),
             nodalLoads = arr("nodalLoads") { NodalLoad(it.getInt("node"), dbl(it.getJSONArray("values")), it.optString("case", "DL")) },
             memberLoads = arr("memberLoads") {
                 MemberLoad(it.getInt("member"), LoadDir.valueOf(it.getString("dir")), it.getDouble("w"), it.optString("case", "DL"),

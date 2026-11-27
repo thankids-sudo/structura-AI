@@ -88,6 +88,7 @@ object ModelEditor {
             members = m.members.filter { it.id != id },
             memberLoads = m.memberLoads.filter { it.member != id },
             pointLoads = m.pointLoads.filter { it.member != id },
+            roles = m.roles - id,
         )
         return removeOrphans(mm)
     }
@@ -100,6 +101,8 @@ object ModelEditor {
             nodes = m.nodes.filter { it.id != id },
             members = m.members.filter { it.id !in gone },
             supports = m.supports.filter { it.node != id },
+            footings = m.footings - id,
+            roles = m.roles - gone,
             nodalLoads = m.nodalLoads.filter { it.node != id },
             memberLoads = m.memberLoads.filter { it.member !in gone },
             pointLoads = m.pointLoads.filter { it.member !in gone },

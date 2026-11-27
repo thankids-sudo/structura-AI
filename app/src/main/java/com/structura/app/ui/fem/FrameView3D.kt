@@ -241,6 +241,8 @@ fun FrameView3D(
     selectedMembers: Set<Int> = emptySet(),
     /** Black-and-white paper look (white ground, black ink, grey scales). */
     mono: Boolean = false,
+    /** Annotations: node numbers, member numbers, section names; grid dimension chains; UCS icon at the origin. */
+    annotations: Annotations = Annotations(),
 ) {
     viewDark = dark && !mono
     viewMono = mono
@@ -375,6 +377,7 @@ fun FrameView3D(
                 drawCircle(ink, 4.5f, p)
             }
             if (reveal >= 1f && loadCase != "" && view == ResultView.MODEL) loads(pj, model, loadColor, loadCase)
+            if (reveal >= 1f) annotate(pj, model, annotations, ink)
 
             if (view == ResultView.BUCKLING || view == ResultView.MODAL) {
                 val shape = (if (view == ResultView.MODAL) modeShape else buckling?.modeShape) ?: return@Canvas
@@ -606,5 +609,73 @@ private fun DrawScope.legend(maxD: Double) {
     drawIntoCanvas {
         it.nativeCanvas.drawText("0", x0, y0 + 36f, paint)
         it.nativeCanvas.drawText("%.2f mm".format(maxD * 1000), x0 + 58f, y0 + 36f, paint)
+    }
+}
+
+
+/** What the main space writes on the model. [ucsOrigin] = origin of the user coordinate system (work plane). */
+data class Annotations(
+    val nodeIds: Boolean = false, val memberIds: Boolean = false, val sections: Boolean = false,
+    val dimensions: Boolean = false, val ucs: Boolean = true, val ucsOrigin: Vec3 = Vec3(0.0, 0.0, 0.0),
+)
+
+private fun DrawScope.annotate(pj: Projector, model: FrameModel, an: Annotations, ink: Color) {
+    if (model.nodes.isEmpty()) return
+    val paint = Paint().apply { textSize = 20f; isAntiAlias = true; color = ink.toArgb() }
+    val bold = Paint().apply { textSize = 21f; isAntiAlias = true; color = ink.toArgb(); typeface = android.graphics.Typeface.DEFAULT_BOLD }
+    val halo = Paint().apply { textSize = 20f; isAntiAlias = true; color = android.graphics.Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 4f }
+    fun text(t: String, at: Offset, p: Paint = paint) = drawIntoCanvas { c ->
+        halo.textSize = p.textSize; c.nativeCanvas.drawText(t, at.x, at.y, halo); c.nativeCanvas.drawText(t, at.x, at.y, p)
+    }
+    val xs = model.nodes.map { it.x }; val ys = model.nodes.map { it.y }; val zs = model.nodes.map { it.z }
+    val size = maxOf(xs.max() - xs.min(), ys.max() - ys.min(), zs.max() - zs.min(), 1.0)
+    // UCS icon (AutoCAD style): X, Y, Z arrows from the UCS origin with a small square at the origin
+    if (an.ucs) {
+        val o = an.ucsOrigin; val l = 0.12 * size
+        val po = pj.screen(o)
+        for ((d, name) in listOf(Vec3.X to "X", Vec3.Y to "Y", Vec3.Z to "Z")) {
+            val tip = pj.screen(o + d * l)
+            drawArrow(po, tip, ink, 2.2f)
+            text(name, tip + Offset(4f, -4f), bold)
+        }
+        drawRect(ink, po - Offset(5f, 5f), androidx.compose.ui.geometry.Size(10f, 10f), style = Stroke(1.6f))
+        text("UCS", po + Offset(8f, 18f))
+    }
+    if (an.nodeIds) for (n in model.nodes) text("N${n.id}", pj.screen(n.pos) + Offset(6f, -6f))
+    if (an.memberIds || an.sections) for (m in model.members) {
+        val a = pj.screen(model.node(m.i).pos); val b = pj.screen(model.node(m.j).pos)
+        val mid = (a + b) / 2f
+        val t = listOfNotNull(if (an.memberIds) "M${m.id}" else null, if (an.sections) m.section.name else null).joinToString(" ")
+        text(t, mid + Offset(5f, 16f))
+    }
+    if (an.dimensions) {
+        // grid dimension chains: X along the front (y min), Y along the right (x max), Z on the left (x min, y min)
+        fun uniq(v: List<Double>) = v.sorted().fold(ArrayList<Double>()) { acc, x -> if (acc.isEmpty() || x - acc.last() > 0.01) acc += x; acc }
+        val ux = uniq(xs); val uy = uniq(ys); val uz = uniq(zs)
+        val off = 0.10 * size
+        val z0 = zs.min()
+        fun chain(pts: List<Vec3>, normal: Vec3) {
+            if (pts.size < 2) return
+            for (k in 0 until pts.size - 1) {
+                val a = pts[k]; val b = pts[k + 1]
+                val sa = pj.screen(a); val sb = pj.screen(b)
+                drawLine(ink, sa, sb, 1.3f)
+                for (q in listOf(a, b)) {                     // 45° tick + extension stub
+                    val sq = pj.screen(q)
+                    drawLine(ink, sq + Offset(-5f, 5f), sq + Offset(5f, -5f), 1.6f)
+                    drawLine(ink.copy(alpha = 0.45f), sq, pj.screen(q - normal * (off * 0.6)), 0.8f)
+                }
+                val len = (b - a).length
+                text(String.format(java.util.Locale.US, "%.2f", len), (sa + sb) / 2f + Offset(-14f, -6f))
+            }
+            val sa = pj.screen(pts.first()); val sb = pj.screen(pts.last())
+        }
+        chain(ux.map { Vec3(it, ys.min() - off, z0) }, Vec3(0.0, -1.0, 0.0))
+        if (uy.size >= 2) chain(uy.map { Vec3(xs.max() + off, it, z0) }, Vec3(1.0, 0.0, 0.0))
+        if (uz.size >= 2) chain(uz.map { Vec3(xs.min() - off, ys.min() - off, it) }, Vec3(-1.0, -1.0, 0.0).unit())
+        // overall lengths outside the chains
+        if (ux.size > 2) text("ΣX ${String.format(java.util.Locale.US, "%.2f", ux.last() - ux.first())} m", pj.screen(Vec3(ux.last(), ys.min() - 1.8 * off, z0)), bold)
+        if (uy.size > 2) text("ΣY ${String.format(java.util.Locale.US, "%.2f", uy.last() - uy.first())} m", pj.screen(Vec3(xs.max() + 1.8 * off, uy.last(), z0)), bold)
+        if (uz.size > 2) text("ΣH ${String.format(java.util.Locale.US, "%.2f", uz.last() - uz.first())} m", pj.screen(Vec3(xs.min() - 1.6 * off, ys.min() - off, uz.last())), bold)
     }
 }

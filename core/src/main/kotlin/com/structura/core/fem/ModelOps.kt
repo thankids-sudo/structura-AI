@@ -45,7 +45,8 @@ object ModelOps {
                 val i = map.getValue(mem.i); val j = map.getValue(mem.j)
                 if (i == j || model.members.any { (it.i == i && it.j == j) || (it.i == j && it.j == i) }) continue
                 val id = ModelEditor.nextMemberId(model)
-                model = model.copy(members = model.members + mem.copy(id = id, i = i, j = j))
+                model = model.copy(members = model.members + mem.copy(id = id, i = i, j = j),
+                    roles = m.roles[mem.id]?.let { r -> model.roles + (id to r) } ?: model.roles)
                 newMembers += id
                 if (withLoads) model = model.copy(
                     memberLoads = model.memberLoads + m.memberLoads.filter { it.member == mem.id }.map { it.copy(member = id) },
@@ -55,7 +56,8 @@ object ModelOps {
             if (withLoads) model = model.copy(nodalLoads = model.nodalLoads + m.nodalLoads.filter { it.node in s.nodes }.map { it.copy(node = map.getValue(it.node)) })
             if (withSupports) for (sp in m.supports.filter { it.node in srcNodes }) {
                 val n = map.getValue(sp.node)
-                if (model.supports.none { it.node == n }) model = model.copy(supports = model.supports + sp.copy(node = n))
+                if (model.supports.none { it.node == n }) model = model.copy(supports = model.supports + sp.copy(node = n),
+                    footings = m.footings[sp.node]?.let { f -> model.footings + (n to f.copy(partner = null)) } ?: model.footings)
             }
             last = Sel(s.nodes.map { map.getValue(it) }.toSet(), newMembers.toSet())
         }
@@ -88,6 +90,44 @@ object ModelOps {
         var model = m
         for (id in s.members) if (model.members.any { it.id == id }) model = ModelEditor.deleteMember(model, id)
         for (id in s.nodes) if (model.nodes.any { it.id == id }) model = ModelEditor.deleteNode(model, id)
+        return tidy(model)
+    }
+
+    /** Drops roles / footings that refer to deleted members / unsupported nodes. */
+    fun tidy(m: FrameModel): FrameModel {
+        val ids = m.members.map { it.id }.toSet(); val sup = m.supports.map { it.node }.toSet()
+        return if (m.roles.keys.all { it in ids } && m.footings.keys.all { it in sup }) m
+        else m.copy(roles = m.roles.filterKeys { it in ids }, footings = m.footings.filterKeys { it in sup })
+    }
+
+    fun setRole(m: FrameModel, members: Set<Int>, role: MemberRole) =
+        m.copy(roles = if (role == MemberRole.AUTO) m.roles - members else m.roles + members.associateWith { role })
+
+    fun setFootings(m: FrameModel, nodes: Set<Int>, spec: FootingSpec): FrameModel {
+        val sup = m.supports.map { it.node }.toSet()
+        val ns = nodes.filter { it in sup }
+        if (spec.type == FootingType.COMBINED && ns.size >= 2) {
+            val (a, b) = ns.take(2)
+            return m.copy(footings = m.footings + (a to spec.copy(partner = b)) + (b to spec.copy(partner = a)))
+        }
+        return m.copy(footings = m.footings + ns.associateWith { spec.copy(type = if (spec.type == FootingType.COMBINED) FootingType.PAD else spec.type, partner = null) })
+    }
+
+    /**
+     * Masonry wall load on beams as a dead-load UDL: γ·t·(h − slab/beam depth)·(1 − openings), e.g. 20 kN/m³ brick (IS 875-1 Table 1).
+     * Lintels get the triangular masonry load within the 60° dispersion (equal-sided triangle on the span), as two linear parts.
+     */
+    fun addWallLoad(m: FrameModel, members: Set<Int>, t: Double, h: Double, gamma: Double = 20.0, openings: Double = 0.0): FrameModel {
+        var model = m
+        for (id in members) {
+            val mem = model.members.firstOrNull { it.id == id } ?: continue
+            val l = (model.node(mem.j).pos - model.node(mem.i).pos).length
+            if (m.roles[id] == MemberRole.LINTEL) {
+                val wMax = gamma * t * minOf(h, l * kotlin.math.sqrt(3.0) / 2)
+                model = model.copy(memberLoads = model.memberLoads +
+                    MemberLoad(id, LoadDir.GLOBAL_Z, 0.0, LoadCase.DL, 0.0, l / 2, -wMax) + MemberLoad(id, LoadDir.GLOBAL_Z, -wMax, LoadCase.DL, l / 2, l, 0.0))
+            } else model = ModelEditor.addMemberUdl(model, id, LoadDir.GLOBAL_Z, -gamma * t * h * (1 - openings.coerceIn(0.0, 0.9)), LoadCase.DL)
+        }
         return model
     }
 
@@ -111,6 +151,8 @@ object ModelOps {
             nodalLoads = m.nodalLoads.map { it.copy(node = map.getValue(it.node)) },
             memberLoads = m.memberLoads.filter { it.member in alive }, pointLoads = m.pointLoads.filter { it.member in alive },
             panels = m.panels.map { p -> p.copy(nodes = p.nodes.map { map.getValue(it) }) },
+            roles = m.roles.filterKeys { it in alive },
+            footings = m.footings.entries.associate { (n, f) -> map.getValue(n) to f.copy(partner = f.partner?.let { map[it] }) },
         )
     }
 
@@ -161,6 +203,8 @@ object ModelOps {
             memberLoads = base.memberLoads + add.memberLoads.map { it.copy(member = it.member + m0) },
             pointLoads = base.pointLoads + add.pointLoads.map { it.copy(member = it.member + m0) },
             planeXZ = base.planeXZ && add.planeXZ && base.nodes.isEmpty(),
+            roles = base.roles + add.roles.mapKeys { it.key + m0 },
+            footings = base.footings + add.footings.entries.associate { (n, f) -> n + n0 to f.copy(partner = f.partner?.let { it + n0 }) },
         )
         val merged = merge(joined)
         val alive = merged.members.map { it.id }.toSet(); val aliveN = merged.nodes.map { it.id }.toSet()

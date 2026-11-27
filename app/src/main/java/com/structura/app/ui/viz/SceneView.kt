@@ -78,7 +78,13 @@ private val Cyan = Color(0xFF3DD6F5)
 private val Orange = Color(0xFFF5A524)
 private val Line = Color(0xFF1F3550)
 
-private fun matColor(m: Mat): Color = when (m) {
+/** Black-and-white rendering (main space). */
+private var sceneMono = false
+
+private fun matColor(m: Mat): Color = if (sceneMono) when (m) {
+    Mat.CONCRETE -> Color(0xFFD9D9D9); Mat.SOIL -> Color(0xFFBDBDBD); Mat.GROUND -> Color(0xFF9E9E9E)
+    Mat.MASONRY -> Color(0xFFBFBFBF); Mat.STEEL -> Color(0xFF8A8A8A); Mat.SHEET -> Color(0xFFCFCFCF)
+} else when (m) {
     Mat.CONCRETE -> Color(0xFFB8C4CC)
     Mat.SOIL -> Color(0xFF9C7A54)
     Mat.GROUND -> Color(0xFF5E4630)
@@ -87,7 +93,7 @@ private fun matColor(m: Mat): Color = when (m) {
     Mat.SHEET -> Color(0xFF7FB3E0)
 }
 
-private fun loadColor(k: Load?): Color = when (k) {
+private fun loadColor(k: Load?): Color = if (sceneMono) Color(0xFF222222) else when (k) {
     Load.EARTH -> Color(0xFFF5A524)
     Load.SURCHARGE -> Color(0xFFFFD54F)
     Load.BEARING -> Color(0xFF3DD6F5)
@@ -102,6 +108,7 @@ enum class SceneLayer(val label: String) { SOIL("Soil"), CONCRETE("Concrete"), S
 private fun layerOf(it: Scene3D.Item): SceneLayer = when (it) {
     is Scene3D.Prism -> if (it.mat == Mat.SOIL || it.mat == Mat.GROUND) SceneLayer.SOIL else SceneLayer.CONCRETE
     is Scene3D.Face -> if (it.mat == Mat.SOIL || it.mat == Mat.GROUND) SceneLayer.SOIL else SceneLayer.CONCRETE
+    is Scene3D.Solid -> if (it.mat == Mat.SOIL || it.mat == Mat.GROUND) SceneLayer.SOIL else SceneLayer.CONCRETE
     is Scene3D.Bar -> SceneLayer.STEEL
     is Scene3D.Arrow -> SceneLayer.LOADS
     is Scene3D.Line -> SceneLayer.LOADS
@@ -130,7 +137,11 @@ private sealed class Prim(val depth: Double) {
  * zoom, double-tap re-centres. Concrete turns translucent ("X-ray") once the reinforcement is placed.
  */
 @Composable
-fun SceneView(scene: Scene3D, modifier: Modifier = Modifier, fullScreen: Boolean = false, onFullScreen: (() -> Unit)? = null) {
+fun SceneView(scene: Scene3D, modifier: Modifier = Modifier, fullScreen: Boolean = false, onFullScreen: (() -> Unit)? = null, mono: Boolean = false) {
+    sceneMono = mono
+    val bg = if (mono) Color.White else Ground
+    val ink = if (mono) Color(0xFF111111) else Ink
+    val accent = if (mono) Color(0xFF111111) else Cyan
     val cam = remember(scene) { SceneCamera() }
     val stagesN = scene.stages.size
     val progress = remember(scene) { Animatable(0f) }
@@ -154,7 +165,7 @@ fun SceneView(scene: Scene3D, modifier: Modifier = Modifier, fullScreen: Boolean
 
     Column(modifier) {
         Box(
-            Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(if (fullScreen) 0.dp else 14.dp)).background(Ground)
+            Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(if (fullScreen || mono) 0.dp else 14.dp)).background(bg)
                 .pointerInput(cam) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
@@ -176,10 +187,10 @@ fun SceneView(scene: Scene3D, modifier: Modifier = Modifier, fullScreen: Boolean
             Canvas(Modifier.fillMaxSize()) { drawScene(scene, cam, p, hidden, xr) }
             // stage caption
             Column(Modifier.align(Alignment.TopStart).padding(10.dp)) {
-                Text(scene.title, color = Ink, fontSize = 13.sp, maxLines = 1)
-                Text("Step ${cur + 1}/$stagesN · ${scene.stages.getOrElse(cur) { "" }}", color = Orange, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                Text(scene.title, color = ink, fontSize = 13.sp, maxLines = 1)
+                Text("Step ${cur + 1}/$stagesN · ${scene.stages.getOrElse(cur) { "" }}", color = if (mono) ink else Orange, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
                 Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                    for (k in 0 until stagesN) Box(Modifier.width(14.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(if (k < p) Cyan else Line))
+                    for (k in 0 until stagesN) Box(Modifier.width(14.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(if (k < p) accent else if (mono) Color(0xFFD0D0D0) else Line))
                 }
             }
             Row(Modifier.align(Alignment.TopEnd).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -204,22 +215,24 @@ fun SceneView(scene: Scene3D, modifier: Modifier = Modifier, fullScreen: Boolean
 
 /** Card with the scene and a full-screen dialog. */
 @Composable
-fun SceneCard(scene: Scene3D, modifier: Modifier = Modifier) {
+fun SceneCard(scene: Scene3D, modifier: Modifier = Modifier, mono: Boolean = true) {
     var full by remember { mutableStateOf(false) }
-    SceneView(scene, modifier, onFullScreen = { full = true })
+    SceneView(scene, modifier, onFullScreen = { full = true }, mono = mono)
     if (full) Dialog(onDismissRequest = { full = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        SceneView(scene, Modifier.fillMaxSize().background(Ground), fullScreen = true, onFullScreen = { full = false })
+        SceneView(scene, Modifier.fillMaxSize().background(if (mono) Color.White else Ground), fullScreen = true, onFullScreen = { full = false }, mono = mono)
     }
 }
 
 @Composable
 private fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
+    val m = sceneMono
     Box(
-        Modifier.height(32.dp).clip(RoundedCornerShape(16.dp)).background(if (selected) Cyan.copy(alpha = 0.14f) else Ground)
-            .border(BorderStroke(1.dp, if (selected) Cyan else Line), RoundedCornerShape(16.dp))
+        Modifier.height(32.dp).clip(RoundedCornerShape(16.dp))
+            .background(if (m) (if (selected) Color(0xFF111111) else Color.White) else if (selected) Cyan.copy(alpha = 0.14f) else Ground)
+            .border(BorderStroke(1.dp, if (m) Color(0xFF111111) else if (selected) Cyan else Line), RoundedCornerShape(16.dp))
             .clickable(role = Role.Button, onClick = onClick).padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center,
-    ) { Text(text, color = if (selected) Cyan else Ink, fontSize = 12.sp) }
+    ) { Text(text, color = if (m) (if (selected) Color.White else Color(0xFF111111)) else if (selected) Cyan else Ink, fontSize = 12.sp) }
 }
 
 private fun DrawScope.drawScene(scene: Scene3D, cam: SceneCamera, progress: Float, hidden: Set<SceneLayer>, xray: Boolean) {
@@ -264,13 +277,24 @@ private fun DrawScope.drawScene(scene: Scene3D, cam: SceneCamera, progress: Floa
                 }
                 for (fc in faces) addFace(prims, fc, base, alpha, light, viewDir, ::scr, ::far)
             }
+            is Scene3D.Solid -> {
+                val all = it.faces.flatten()
+                val zmin = all.minOf { q -> q.z }
+                val alpha = when (it.mat) {
+                    Mat.SOIL -> 0.30; Mat.GROUND -> if (sceneMono) 0.35 else 0.55
+                    Mat.CONCRETE, Mat.MASONRY -> if (xray) 0.22 else 0.88
+                    else -> 0.75
+                } * min(1.0, f * 2.5)
+                for (fc in it.faces) addFace(prims, fc.map { q -> V(q.x, q.y, zmin + (q.z - zmin) * f) }, matColor(it.mat), alpha, light, viewDir, ::scr, ::far)
+            }
             is Scene3D.Face -> {
                 val drop = (1 - f) * 0.8
                 addFace(prims, it.pts.map { q -> q + V(0.0, 0.0, drop) }, matColor(it.mat), 0.45 * f, light, viewDir, ::scr, ::far)
             }
             is Scene3D.Bar -> {
                 val pts = partial(it.pts, f)
-                val col = if (it.steel) Color(0xFFCFD8DC) else if (it.main) Color(0xFFE53935) else Color(0xFFFF8A65)
+                val col = if (sceneMono) (if (it.steel) Color(0xFF444444) else if (it.main) Color(0xFF000000) else Color(0xFF666666))
+                    else if (it.steel) Color(0xFFCFD8DC) else if (it.main) Color(0xFFE53935) else Color(0xFFFF8A65)
                 val wpx = if (it.steel) max(2.5f, (it.dia / 1000 * scale).toFloat().coerceAtMost(7f)) else max(1.4f, (it.dia / 1000 * scale * 1.3).toFloat().coerceAtMost(6f))
                 for (k in 1 until pts.size) prims += Prim.Seg(scr(pts[k - 1]), scr(pts[k]), col, wpx, (far(pts[k - 1]) + far(pts[k])) / 2 - 0.01)
             }
@@ -282,10 +306,10 @@ private fun DrawScope.drawScene(scene: Scene3D, cam: SceneCamera, progress: Floa
                 val b = it.a + (it.b - it.a) * f
                 prims += Prim.Seg(scr(it.a), scr(b), loadColor(it.kind), 2f, -1e3, dashed = it.dashed)
             }
-            is Scene3D.Label -> prims += Prim.Txt(scr(it.at), it.text, Ink.copy(alpha = f.toFloat()), if (it.strong) 27f else 23f, it.strong, -2e3)
+            is Scene3D.Label -> prims += Prim.Txt(scr(it.at), it.text, (if (sceneMono) Color(0xFF111111) else Ink).copy(alpha = f.toFloat()), if (it.strong) 27f else 23f, it.strong, -2e3)
             is Scene3D.Dim -> {
                 val a = scr(it.a); val b = scr(it.b)
-                val col = Cyan.copy(alpha = f.toFloat())
+                val col = (if (sceneMono) Color(0xFF111111) else Cyan).copy(alpha = f.toFloat())
                 prims += Prim.Seg(a, b, col, 1.6f, -1.5e3)
                 val d = b - a; val l = d.getDistance().coerceAtLeast(1e-3f); val n = Offset(-d.y / l, d.x / l) * 9f
                 prims += Prim.Seg(a - n, a + n, col, 1.6f, -1.5e3); prims += Prim.Seg(b - n, b + n, col, 1.6f, -1.5e3)
@@ -314,7 +338,7 @@ private fun DrawScope.drawScene(scene: Scene3D, cam: SceneCamera, progress: Floa
         is Prim.Txt -> drawIntoCanvas { cv ->
             paint.textSize = pr.size; paint.color = pr.color.toArgb()
             paint.typeface = if (pr.bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            paint.setShadowLayer(4f, 0f, 0f, android.graphics.Color.BLACK)
+            if (sceneMono) paint.setShadowLayer(3f, 0f, 0f, android.graphics.Color.WHITE) else paint.setShadowLayer(4f, 0f, 0f, android.graphics.Color.BLACK)
             cv.nativeCanvas.drawText(pr.text, pr.at.x + 4, pr.at.y - 4, paint)
         }
     }
@@ -332,7 +356,7 @@ private fun addFace(out: ArrayList<Prim>, pts: List<V>, base: Color, alpha: Doub
     val k = (0.50 + 0.50 * lam).toFloat()
     val fill = Color(base.red * k, base.green * k, base.blue * k, alpha.toFloat())
     val d = pts.sumOf { far(it) } / pts.size
-    out += Prim.Poly(pts.map(scr), fill, Color(0xFF0B1320).copy(alpha = (0.5 * alpha).toFloat().coerceAtMost(0.5f)), d)
+    out += Prim.Poly(pts.map(scr), fill, (if (sceneMono) Color(0xFF000000) else Color(0xFF0B1320)).copy(alpha = (0.5 * alpha).toFloat().coerceAtMost(0.5f)), d)
 }
 
 /** First fraction [f] of a polyline by length. */
